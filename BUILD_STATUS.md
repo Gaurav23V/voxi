@@ -15,6 +15,12 @@
 - Expanded README with quickstart, architecture, testing, troubleshooting, and GNOME shortcut instructions
 - Validated manual happy-path and clipboard-fallback smoke runs with fake worker/shim tooling
 - Verified `voxi doctor` actionable output on the current VM
+- Follow-up hardening fixes:
+  - removed ripgrep usage from `scripts/setup.sh`
+  - added CLI daemon RPC timeout handling
+  - replaced broad socket cleanup with targeted stale-socket removal
+  - fixed cleanup adapter timeout classification
+  - added insertion double-failure integration coverage
 
 ## Decisions made
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import threading
+import urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -53,3 +55,31 @@ def test_ollama_cleanup_adapter() -> None:
     finally:
         server.shutdown()
         thread.join(timeout=1)
+
+
+def test_ollama_cleanup_timeout_from_urlerror(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = OllamaCleanupAdapter(model_name="gemma3:4b", ollama_url="http://127.0.0.1:11434")
+
+    def raise_timeout(*args: object, **kwargs: object) -> object:
+        raise urllib.error.URLError(socket.timeout("timed out"))
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_timeout)
+
+    with pytest.raises(WorkerError) as excinfo:
+        adapter.clean("hello")
+
+    assert excinfo.value.code == "LLM_TIMEOUT"
+
+
+def test_ollama_cleanup_unavailable_from_urlerror(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = OllamaCleanupAdapter(model_name="gemma3:4b", ollama_url="http://127.0.0.1:11434")
+
+    def raise_unavailable(*args: object, **kwargs: object) -> object:
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_unavailable)
+
+    with pytest.raises(WorkerError) as excinfo:
+        adapter.clean("hello")
+
+    assert excinfo.value.code == "LLM_UNAVAILABLE"

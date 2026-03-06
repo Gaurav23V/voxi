@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -142,14 +145,50 @@ func runDoctor() error {
 }
 
 func callDaemon(op string) (ipc.DaemonResponse, error) {
+	timeout := daemonRPCTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	request := ipc.DaemonRequest{
 		ID: fmt.Sprintf("cli-%d", os.Getpid()),
 		Op: op,
 	}
 
 	var response ipc.DaemonResponse
-	if err := ipc.Call(context.Background(), xruntime.DaemonSocketPath(), request, &response); err != nil {
+	if err := ipc.Call(ctx, xruntime.DaemonSocketPath(), request, &response); err != nil {
+		if isRPCTimeout(err) {
+			return ipc.DaemonResponse{}, fmt.Errorf("daemon request timed out after %s", timeout)
+		}
 		return ipc.DaemonResponse{}, err
 	}
 	return response, nil
+}
+
+func daemonRPCTimeout() time.Duration {
+	const defaultTimeout = 2 * time.Second
+
+	raw := os.Getenv("VOXI_DAEMON_RPC_TIMEOUT_MS")
+	if raw == "" {
+		return defaultTimeout
+	}
+
+	timeoutMS, err := strconv.Atoi(raw)
+	if err != nil || timeoutMS <= 0 {
+		return defaultTimeout
+	}
+
+	return time.Duration(timeoutMS) * time.Millisecond
+}
+
+func isRPCTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+		return true
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), "timeout")
 }

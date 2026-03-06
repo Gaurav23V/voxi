@@ -28,7 +28,7 @@ func NewServer(socketPath string, handler Handler) *Server {
 }
 
 func (s *Server) Start() error {
-	if err := os.RemoveAll(s.socketPath); err != nil {
+	if err := removeStaleSocket(s.socketPath); err != nil {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}
 
@@ -95,4 +95,20 @@ func (s *Server) serve() {
 			_ = json.NewEncoder(conn).Encode(response)
 		}()
 	}
+}
+
+func removeStaleSocket(socketPath string) error {
+	info, err := os.Lstat(socketPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refusing to remove non-socket path %s", socketPath)
+	}
+
+	return os.Remove(socketPath)
 }

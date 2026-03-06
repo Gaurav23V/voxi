@@ -100,6 +100,50 @@ func TestInsertionFallbackBehavior(t *testing.T) {
 	}
 }
 
+func TestInsertionDoubleFailureSurfacesActionFailed(t *testing.T) {
+	recorder := &fakeRecorder{
+		capture: audio.Capture{Audio: []byte("1234"), AudioFormat: "pcm_s16le", SampleRateHz: 16000},
+	}
+	inserter := &fakeInserter{err: integrationErr("wtype failed")}
+	clipboard := &fakeClipboard{err: integrationErr("clipboard failed")}
+	notifier := &fakeNotifier{}
+
+	service := daemon.NewService(
+		config.Default(),
+		recorder,
+		fakeWorker{result: worker.Result{Transcript: "hello there", Cleaned: "Hello there."}},
+		inserter,
+		clipboard,
+		notifier,
+		logging.NewForWriter(testWriter{t}),
+	)
+
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("first Toggle() error = %v", err)
+	}
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("second Toggle() error = %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if service.Status() == state.Idle {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if inserter.calls != 2 {
+		t.Fatalf("Insert calls = %d, want 2", inserter.calls)
+	}
+	if clipboard.calls != 1 {
+		t.Fatalf("Clipboard calls = %d, want 1", clipboard.calls)
+	}
+	if !notifier.contains("Action failed|Stage: Text insertion (clipboard failed)") {
+		t.Fatalf("expected final insertion failure notification, got %v", notifier.messages)
+	}
+}
+
 type fakeRecorder struct {
 	capture audio.Capture
 }
@@ -172,6 +216,12 @@ func (f *fakeNotifier) contains(prefix string) bool {
 		}
 	}
 	return false
+}
+
+type integrationErr string
+
+func (e integrationErr) Error() string {
+	return string(e)
 }
 
 type testWriter struct {

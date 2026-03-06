@@ -14,6 +14,7 @@ Build MVP: Voxi daemon+worker, tests, setup, and docs
 - Added Unix socket JSON RPC contracts for CLI<->daemon and daemon<->worker
 - Added Fedora-oriented setup automation, a systemd user service unit, command shims, and end-user documentation
 - Added Go and Python automated coverage for state safety, retry semantics, fallback behavior, worker crash recovery, doctor checks, and IPC
+- Added follow-up hardening for clean bootstrap, CLI RPC timeouts, safe stale-socket cleanup, cleanup timeout classification, and insertion double-failure coverage
 
 ## Architecture summary
 
@@ -42,7 +43,7 @@ Manual source workflow:
 ## Test results
 
 - `go test ./...` -> pass
-- `python3 -m pytest worker/tests` -> `8 passed, 1 skipped`
+- `python3 -m pytest worker/tests` -> `10 passed, 1 skipped`
   - the skipped test is the optional real-model smoke path behind `VOXI_RUN_REAL_MODEL_SMOKE=1`
 - `go build -o ./bin/voxi ./cmd/voxi` -> pass
 - `bash -n scripts/setup.sh` -> pass

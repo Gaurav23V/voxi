@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -63,12 +64,17 @@ class OllamaCleanupAdapter(CleanupAdapter):
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
                 raw = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            raise WorkerError("text_cleanup", "LLM_UNAVAILABLE", f"HTTP {exc.code}") from exc
-        except urllib.error.URLError as exc:
-            raise WorkerError("text_cleanup", "LLM_UNAVAILABLE", str(exc.reason)) from exc
+        except socket.timeout as exc:
+            raise WorkerError("text_cleanup", "LLM_TIMEOUT", "request exceeded timeout") from exc
         except TimeoutError as exc:
             raise WorkerError("text_cleanup", "LLM_TIMEOUT", "request exceeded timeout") from exc
+        except urllib.error.HTTPError as exc:
+            code = "LLM_TIMEOUT" if exc.code in {408, 504} else "LLM_UNAVAILABLE"
+            raise WorkerError("text_cleanup", code, f"HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            if is_timeout_reason(exc.reason):
+                raise WorkerError("text_cleanup", "LLM_TIMEOUT", "request exceeded timeout") from exc
+            raise WorkerError("text_cleanup", "LLM_UNAVAILABLE", str(exc.reason)) from exc
 
         try:
             parsed = json.loads(raw)
@@ -87,3 +93,9 @@ def build_cleanup_adapter(model_name: str, ollama_url: str) -> CleanupAdapter:
     if mode == "fake":
         return FakeCleanupAdapter(model_name=model_name, ollama_url=ollama_url)
     return OllamaCleanupAdapter(model_name=model_name, ollama_url=ollama_url)
+
+
+def is_timeout_reason(reason: object) -> bool:
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return True
+    return "timed out" in str(reason).lower()

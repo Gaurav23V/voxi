@@ -27,6 +27,20 @@ require_command() {
   fi
 }
 
+config_has_key() {
+  local key="$1"
+  local file="$2"
+  grep -Eq "^${key}:" "$file"
+}
+
+has_ollama_systemd_unit() {
+  systemctl list-unit-files --type=service --no-legend ollama.service 2>/dev/null | grep -Eq '^ollama\.service([[:space:]]|$)'
+}
+
+has_nvidia_hardware() {
+  lspci | grep -qi 'nvidia'
+}
+
 is_fedora() {
   [[ -f /etc/os-release ]] || return 1
   # shellcheck disable=SC1091
@@ -81,7 +95,7 @@ ensure_ollama() {
     curl -fsSL https://ollama.com/install.sh | sh
   fi
 
-  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | rg -q '^ollama\.service'; then
+  if command -v systemctl >/dev/null 2>&1 && has_ollama_systemd_unit; then
     log "enabling ollama.service"
     sudo systemctl enable --now ollama.service
   else
@@ -142,12 +156,12 @@ EOF
     return 0
   fi
 
-  if ! rg -q '^worker_python:' "${CONFIG_FILE}"; then
+  if ! config_has_key "worker_python" "${CONFIG_FILE}"; then
     log "adding worker_python to existing config"
     printf '\nworker_python: "%s"\n' "${WORKER_PYTHON_BIN}" >> "${CONFIG_FILE}"
   fi
 
-  if ! rg -q '^worker_entrypoint:' "${CONFIG_FILE}"; then
+  if ! config_has_key "worker_entrypoint" "${CONFIG_FILE}"; then
     log "adding worker_entrypoint to existing config"
     printf 'worker_entrypoint: "voxi_worker"\n' >> "${CONFIG_FILE}"
   fi
@@ -173,7 +187,7 @@ check_nvidia_prereqs() {
     return 0
   fi
 
-  if command -v lspci >/dev/null 2>&1 && lspci | rg -qi 'nvidia'; then
+  if command -v lspci >/dev/null 2>&1 && has_nvidia_hardware; then
     warn "NVIDIA hardware detected but nvidia-smi is unavailable. Install and validate the Fedora NVIDIA driver stack before expecting CUDA acceleration."
   else
     log "no NVIDIA runtime detected; CPU fallback is expected"
