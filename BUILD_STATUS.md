@@ -29,3 +29,5 @@
 
 - Python `venv` bootstrap is unavailable in this VM because `ensurepip` is missing
   - resolved for local testing by installing `pytest` and the editable worker package into the user site with `python3 -m pip install --user --break-system-packages ...`
+- GitHub API pull-request creation returned HTTP 403 from this environment
+  - captured the full PR title/body in `PR_REPORT.md` so the report is preserved even though the PR could not be created programmatically
