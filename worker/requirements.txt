@@ -1,0 +1,2 @@
+# Runtime requirements are intentionally minimal for fake-driven tests.
+# Install NeMo and Torch separately when enabling the real Parakeet ASR path.
