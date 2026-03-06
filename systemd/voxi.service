@@ -1,0 +1,15 @@
+[Unit]
+Description=Voxi local dictation daemon
+After=graphical-session.target
+PartOf=graphical-session.target
+BindsTo=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/voxi daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
