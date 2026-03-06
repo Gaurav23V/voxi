@@ -15,11 +15,11 @@ import (
 )
 
 type Check struct {
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	Detail    string `json:"detail"`
-	Fatal     bool   `json:"fatal,omitempty"`
-	Category  string `json:"category,omitempty"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Detail   string `json:"detail"`
+	Fatal    bool   `json:"fatal,omitempty"`
+	Category string `json:"category,omitempty"`
 }
 
 type Report struct {

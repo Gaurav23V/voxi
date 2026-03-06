@@ -44,6 +44,37 @@ func (f fakeWorker) Health(context.Context, string) (worker.Health, error) {
 	return worker.Health{}, nil
 }
 
+type sequenceWorker struct {
+	mu      sync.Mutex
+	results []worker.Result
+	errors  []error
+	calls   int
+}
+
+func (s *sequenceWorker) TranscribeAndClean(context.Context, string, audio.Capture) (worker.Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index := s.calls
+	s.calls++
+
+	var result worker.Result
+	if index < len(s.results) {
+		result = s.results[index]
+	}
+
+	var err error
+	if index < len(s.errors) {
+		err = s.errors[index]
+	}
+
+	return result, err
+}
+
+func (s *sequenceWorker) Health(context.Context, string) (worker.Health, error) {
+	return worker.Health{}, nil
+}
+
 type fakeInserter struct {
 	mu    sync.Mutex
 	calls int
@@ -80,6 +111,17 @@ func (f *fakeNotifier) Notify(_ context.Context, title, body string) error {
 	defer f.mu.Unlock()
 	f.messages = append(f.messages, title+"|"+body)
 	return nil
+}
+
+func (f *fakeNotifier) contains(target string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, message := range f.messages {
+		if message == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestToggleStartsRecording(t *testing.T) {
@@ -167,6 +209,125 @@ func TestRecordingStopTriggersPipelineAndResetsIdle(t *testing.T) {
 	t.Fatalf("service did not return to Idle, current=%s insertCalls=%d", service.Status(), inserter.calls)
 }
 
+func TestASRTransientFailureRetriesOnce(t *testing.T) {
+	recorder := &fakeRecorder{
+		capture: audio.Capture{
+			Audio:        []byte("test"),
+			AudioFormat:  "pcm_s16le",
+			SampleRateHz: 16000,
+		},
+	}
+	notifier := &fakeNotifier{}
+	workerClient := &sequenceWorker{
+		results: []worker.Result{
+			{Stage: "speech_recognition", Code: "ASR_TIMEOUT", Message: "inference exceeded timeout"},
+			{Transcript: "hello", Cleaned: "Hello."},
+		},
+		errors: []error{assertErr("timeout"), nil},
+	}
+
+	service := NewService(
+		config.Default(),
+		recorder,
+		workerClient,
+		&fakeInserter{},
+		&fakeClipboard{},
+		notifier,
+		logging.NewForWriter(testWriter{t}),
+	)
+
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("first Toggle() error = %v", err)
+	}
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("second Toggle() error = %v", err)
+	}
+
+	waitForIdle(t, service)
+	if workerClient.calls != 2 {
+		t.Fatalf("worker calls = %d, want 2", workerClient.calls)
+	}
+}
+
+func TestPermanentASRFailureSurfacesTranscriptionFailed(t *testing.T) {
+	recorder := &fakeRecorder{
+		capture: audio.Capture{
+			Audio:        []byte("test"),
+			AudioFormat:  "pcm_s16le",
+			SampleRateHz: 16000,
+		},
+	}
+	notifier := &fakeNotifier{}
+	workerClient := &sequenceWorker{
+		results: []worker.Result{
+			{Stage: "speech_recognition", Code: "ASR_TIMEOUT", Message: "inference exceeded timeout"},
+			{Stage: "speech_recognition", Code: "ASR_TIMEOUT", Message: "inference exceeded timeout"},
+		},
+		errors: []error{assertErr("timeout"), assertErr("timeout")},
+	}
+
+	service := NewService(
+		config.Default(),
+		recorder,
+		workerClient,
+		&fakeInserter{},
+		&fakeClipboard{},
+		notifier,
+		logging.NewForWriter(testWriter{t}),
+	)
+
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("first Toggle() error = %v", err)
+	}
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("second Toggle() error = %v", err)
+	}
+
+	waitForIdle(t, service)
+	if !notifier.contains("Transcription failed|Stage: Speech recognition (inference exceeded timeout)") {
+		t.Fatalf("expected transcription failure notification, got %v", notifier.messages)
+	}
+}
+
+func TestCleanupTransientFailureRetriesOnce(t *testing.T) {
+	recorder := &fakeRecorder{
+		capture: audio.Capture{
+			Audio:        []byte("test"),
+			AudioFormat:  "pcm_s16le",
+			SampleRateHz: 16000,
+		},
+	}
+	workerClient := &sequenceWorker{
+		results: []worker.Result{
+			{Stage: "text_cleanup", Code: "LLM_TIMEOUT", Message: "request exceeded timeout"},
+			{Transcript: "hello", Cleaned: "Hello."},
+		},
+		errors: []error{assertErr("timeout"), nil},
+	}
+
+	service := NewService(
+		config.Default(),
+		recorder,
+		workerClient,
+		&fakeInserter{},
+		&fakeClipboard{},
+		&fakeNotifier{},
+		logging.NewForWriter(testWriter{t}),
+	)
+
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("first Toggle() error = %v", err)
+	}
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("second Toggle() error = %v", err)
+	}
+
+	waitForIdle(t, service)
+	if workerClient.calls != 2 {
+		t.Fatalf("worker calls = %d, want 2", workerClient.calls)
+	}
+}
+
 type testWriter struct {
 	t *testing.T
 }
@@ -174,4 +335,24 @@ type testWriter struct {
 func (w testWriter) Write(p []byte) (int, error) {
 	w.t.Log(string(p))
 	return len(p), nil
+}
+
+func waitForIdle(t *testing.T, service *Service) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if service.Status() == state.Idle {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("service did not return to Idle, current=%s", service.Status())
+}
+
+type assertErr string
+
+func (e assertErr) Error() string {
+	return string(e)
 }

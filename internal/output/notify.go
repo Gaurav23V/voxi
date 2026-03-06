@@ -3,6 +3,7 @@ package output
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 )
@@ -17,8 +18,12 @@ type NotifySend struct {
 }
 
 func NewNotifySend(timeoutMS int) *NotifySend {
+	command := os.Getenv("VOXI_NOTIFY_SEND_COMMAND")
+	if command == "" {
+		command = "notify-send"
+	}
 	return &NotifySend{
-		Command:   "notify-send",
+		Command:   command,
 		TimeoutMS: timeoutMS,
 	}
 }

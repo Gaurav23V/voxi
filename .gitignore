@@ -11,6 +11,7 @@ coverage/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
+*.egg-info/
 
 *.pyc
 *.pyo

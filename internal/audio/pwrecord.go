@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
-	"time"
+	"syscall"
 
 	"github.com/Gaurav23V/voxi/internal/xruntime"
 )
@@ -54,7 +55,6 @@ func (r *PWRecorder) Start(context.Context) error {
 		_ = os.Remove(tempFile.Name())
 		return fmt.Errorf("start recorder: %w", err)
 	}
-
 	r.cmd = cmd
 	r.filePath = tempFile.Name()
 	return nil
@@ -71,7 +71,6 @@ func (r *PWRecorder) Stop(ctx context.Context) (Capture, error) {
 	if cmd == nil {
 		return Capture{}, errors.New("recording not active")
 	}
-
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		return Capture{}, fmt.Errorf("stop recorder process: %w", err)
 	}
@@ -83,7 +82,7 @@ func (r *PWRecorder) Stop(ctx context.Context) (Capture, error) {
 
 	select {
 	case err := <-waitCh:
-		if err != nil {
+		if err != nil && !isExpectedStopError(err) {
 			return Capture{}, fmt.Errorf("wait for recorder: %w", err)
 		}
 	case <-ctx.Done():
@@ -140,17 +139,12 @@ func extractPCMData(content []byte) ([]byte, error) {
 	return nil, errors.New("wav data chunk not found")
 }
 
-func waitForProcess(ctx context.Context, cmd *exec.Cmd) error {
-	waitCh := make(chan error, 1)
-	go func() {
-		waitCh <- cmd.Wait()
-	}()
-
-	select {
-	case err := <-waitCh:
-		return err
-	case <-ctx.Done():
-		time.Sleep(10 * time.Millisecond)
-		return ctx.Err()
+func isExpectedStopError(err error) bool {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signal() == os.Interrupt {
+			return true
+		}
 	}
+	return strings.Contains(strings.ToLower(err.Error()), "interrupt")
 }

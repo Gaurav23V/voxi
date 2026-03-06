@@ -4,10 +4,10 @@ This file mirrors the approved implementation plan used to execute the MVP build
 
 ## Milestones
 
-- [ ] M1 — Control plane skeleton
-- [ ] M2 — Recording + ASR integration
-- [ ] M3 — Cleanup + insertion
-- [ ] M4 — Reliability, doctor, setup, docs, and hardening
+- [x] M1 — Control plane skeleton
+- [x] M2 — Recording + ASR integration
+- [x] M3 — Cleanup + insertion
+- [x] M4 — Reliability, doctor, setup, docs, and hardening
 
 ## Milestone mapping
 

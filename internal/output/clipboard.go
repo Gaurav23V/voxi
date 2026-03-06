@@ -3,6 +3,7 @@ package output
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -16,7 +17,11 @@ type WLCopyClipboard struct {
 }
 
 func NewWLCopyClipboard() *WLCopyClipboard {
-	return &WLCopyClipboard{Command: "wl-copy"}
+	command := os.Getenv("VOXI_WL_COPY_COMMAND")
+	if command == "" {
+		command = "wl-copy"
+	}
+	return &WLCopyClipboard{Command: command}
 }
 
 func (c *WLCopyClipboard) Copy(ctx context.Context, text string) error {

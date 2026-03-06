@@ -3,6 +3,7 @@ package output
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 )
 
@@ -15,7 +16,11 @@ type WTypeInserter struct {
 }
 
 func NewWTypeInserter() *WTypeInserter {
-	return &WTypeInserter{Command: "wtype"}
+	command := os.Getenv("VOXI_WTYPE_COMMAND")
+	if command == "" {
+		command = "wtype"
+	}
+	return &WTypeInserter{Command: command}
 }
 
 func (i *WTypeInserter) Insert(ctx context.Context, text string) error {

@@ -1,5 +1,5 @@
 GO ?= go
-PYTHON ?= python3
+PYTHON ?= $(shell if [ -x ./.venv/bin/python3 ]; then echo ./.venv/bin/python3; else echo python3; fi)
 
 .PHONY: fmt
 fmt:

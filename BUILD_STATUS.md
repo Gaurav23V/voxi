@@ -10,6 +10,11 @@
 - Implemented daemon RPC server, state machine, notifications, structured logging, and fallback-capable pipeline orchestration
 - Implemented Python worker package with fake and real adapter paths, Unix socket server, and health reporting
 - Added Go and Python automated tests for state safety, IPC, fallback behavior, doctor checks, and worker restart recovery
+- Added reusable command shims under `testdata/bin` for local smoke testing
+- Added Fedora-aware idempotent `scripts/setup.sh`
+- Expanded README with quickstart, architecture, testing, troubleshooting, and GNOME shortcut instructions
+- Validated manual happy-path and clipboard-fallback smoke runs with fake worker/shim tooling
+- Verified `voxi doctor` actionable output on the current VM
 
 ## Decisions made
 
@@ -18,6 +23,7 @@
 - Use fake-driven tests by default so automated runs do not require models, GNOME, or GPU access
 - Use a warm Python worker supervisor in the Go daemon, with automatic restart on socket/process failure
 - Use `pw-record` for PipeWire capture and normalize output to `pcm_s16le`
+- Install the Python worker into a project-local virtualenv and point `worker_python` at that interpreter in the generated config
 
 ## Blockers and resolution
 
