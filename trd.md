@@ -2,7 +2,7 @@
 
 ## Document Control
 
-- Version: 1.0
+- Version: 1.1
 - Status: Draft for review
 - Scope: Personal machine MVP (GNOME on Fedora, Wayland session)
 - Related doc: `prd.md`
@@ -35,15 +35,7 @@ It explains:
 - Minimal user feedback notifications
 - Local-only data handling
 
-## 2.2 Out of Scope (MVP)
-
-- Streaming partial transcripts
-- Editing UI before insertion
-- Multi-language routing
-- Cloud services
-- Multi-desktop support hardening (beyond GNOME/Fedora)
-
-## 2.3 Hard Constraints
+## 2.2 Hard Constraints
 
 - Must work on GNOME + Wayland on Fedora first
 - Must not allow overlapping dictation runs
@@ -70,9 +62,10 @@ If any assumption fails, MVP behavior should degrade gracefully, not crash.
 | Decision | Choice | Why |
 | --- | --- | --- |
 | Hotkey registration | GNOME custom keyboard shortcut calling `voxi toggle` | Most reliable for GNOME MVP; avoids fragile generic global key capture |
-| App architecture | Python daemon + Python ML worker (two processes) | Fastest implementation for solo dev, keeps ML isolation requirement |
+| App architecture | Go daemon + Python ML worker (two processes) | Compiled control-plane reliability with simple implementation and strong ML ecosystem fit |
 | Process boundary | Daemon (control plane) separate from worker (ASR+LLM) | Prevent ML crashes/latency from freezing UX and hotkey handling |
 | ASR runtime | Parakeet via NeMo-based adapter in worker | Aligns with PRD and model requirement |
+| GPU utilization policy | Prefer CUDA, verify at startup and runtime, fallback to CPU with explicit warning | Ensures predictable performance and easier debugging |
 | Cleanup runtime | Ollama HTTP API | Simple local model management and warm keep-alive |
 | Insertion | `wtype` primary, clipboard fallback via `wl-copy` | Best practical Wayland path on GNOME; fallback is robust |
 | Notifications | `notify-send`/Freedesktop notifications | Minimal implementation, native GNOME behavior |
@@ -100,24 +93,49 @@ Use GNOME keyboard settings to bind `Super+I` to:
 
 `org.freedesktop.portal.GlobalShortcuts` is a strong future option for broader desktop support, but not required for personal GNOME-first MVP.
 
-## 5.2 Python-Only Language Stack (with Two Processes)
+## 5.2 Go + Python Language Stack (with Two Processes)
 
 ### Chosen
 
-- Daemon: Python asyncio service
+- Daemon: Go service (control plane)
 - Worker: Python subprocess
 
 ### Why
 
-- Fastest iteration for solo implementation.
-- Direct access to ASR ecosystem.
-- Keeps two-process isolation without cross-language complexity.
+- Compiled daemon + CLI reduces environment fragility for GNOME shortcuts and systemd user services.
+- Go standard library (`net`, `os/exec`, `context`, `encoding/json`) maps directly to daemon requirements.
+- Go is already a strong language match for this developer, improving delivery speed and maintenance.
+- Python worker preserves direct access to ASR ecosystem and local LLM integrations.
+- Keeps strict process isolation while avoiding heavy control-plane complexity.
 
-### Deferred alternative
+### Why not Rust right now
 
-Rust daemon + Python worker is a valid future hardening path, but not the fastest route to first usable daily build.
+- Rust provides stronger compile-time guarantees and a strong desktop/portal ecosystem.
+- For this MVP, end-to-end latency is dominated by ASR/LLM inference, so daemon-language performance gains are marginal.
+- The Go option gives better complexity-to-value right now without blocking a future rewrite.
+- We keep daemon/worker RPC contracts stable so a future Rust daemon remains low-risk if needed.
 
-## 5.3 Insertion: `wtype` First
+## 5.3 Go vs Rust Decision Record (Daemon Layer)
+
+This comparison is specific to Voxi's daemon scope (CLI, state machine, IPC, worker supervision, insertion orchestration, doctor checks).
+
+| Criterion | Go assessment | Rust assessment | MVP decision driver |
+| --- | --- | --- | --- |
+| Delivery speed | Very strong | Medium | Go |
+| Control-plane reliability | Strong and sufficient | Strongest | Tie (both acceptable) |
+| Desktop/portal ecosystem | Good (`godbus`) | Strong (`zbus`/`ashpd`) | Deferred need, so Go |
+| Systemd/service ergonomics | Strong | Strong | Tie |
+| Runtime overhead | Low | Lower | Not primary for MVP |
+| End-to-end latency impact | Marginal vs Rust | Marginal vs Go | Not decision driver |
+| Maintainability for this owner | Strong (current expertise) | Medium (new stack) | Go |
+
+Decision outcome:
+
+- For MVP and near-term releases, daemon language is **Go**.
+- Python remains the ML worker language.
+- We preserve versioned IPC contracts so future daemon-language migration remains feasible.
+
+## 5.4 Insertion: `wtype` First
 
 ### Chosen
 
@@ -148,7 +166,7 @@ GNOME Shortcut (Super+I)
   Unix socket RPC
         v
 +-----------------------+
-| Voxi Daemon (Python)  |
+| Voxi Daemon (Go)      |
 | - state machine       |
 | - audio start/stop    |
 | - timeout/retry       |
@@ -244,6 +262,11 @@ Non-responsibilities:
 
 - Direct model inference logic (worker owns that)
 
+Implementation language:
+
+- Go
+- recommended libraries: `cobra` (CLI), `encoding/json` (RPC payloads), Unix sockets via Go stdlib
+
 ## 9.3 ML Worker
 
 Responsibilities:
@@ -269,8 +292,16 @@ MVP requirements:
 
 Implementation approach:
 
-- Daemon captures to memory buffer (preferred for short utterances)
-- If buffer exceeds threshold, spill to temp file under runtime dir
+- Daemon controls recording start/stop boundaries.
+- Capture implementation should avoid complex native bindings in MVP:
+  - preferred path: subprocess capture tooling (for example PipeWire/Pulse-compatible CLI tools)
+- Store short utterances in memory where practical; use runtime temp files when needed.
+
+Utterance duration policy (MVP):
+
+- No hard maximum utterance duration is enforced.
+- Recording duration is user-controlled via hotkey start/stop.
+- Longer utterances are supported with the understanding that processing latency scales with input length.
 
 ## 9.5 ASR Adapter (Parakeet)
 
@@ -280,12 +311,29 @@ Responsibilities:
 - Invoke Parakeet model inference
 - Return plain transcript text
 
+Pinned MVP ASR checkpoint:
+
+- `nvidia/parakeet-tdt-0.6b-v2`
+- English-focused default for current scope.
+- Future model swaps are allowed as a separate optimization task.
+
 Error classes:
 
 - model unavailable
 - timeout
 - inference runtime failure
 - empty transcript
+
+GPU requirements and checks:
+
+- Worker must attempt CUDA device selection first.
+- At startup, worker logs selected device (`cuda:<id>` or `cpu`).
+- If GPU is expected but unavailable, daemon must surface a clear warning.
+- During transcription, logs must include the device used for that run.
+- `voxi doctor` must validate GPU availability and report:
+  - NVIDIA GPU detected or not
+  - driver/runtime health (for example `nvidia-smi` accessibility)
+  - whether ASR runtime is using CUDA or CPU fallback
 
 ## 9.6 Cleanup Adapter (Ollama)
 
@@ -302,6 +350,11 @@ Prompt contract:
 - preserve meaning
 - return cleaned text only
 
+Pinned MVP cleanup model:
+
+- `gemma3:4b`
+- Model changes are allowed later as a small, isolated optimization task.
+
 ## 9.7 Output Adapter
 
 Order:
@@ -310,6 +363,11 @@ Order:
 2. on failure, copy to clipboard with `wl-copy`
 
 On fallback, user message must clearly say clipboard was used.
+
+Clipboard policy (MVP):
+
+- Do not preserve previous clipboard contents when fallback occurs.
+- Fallback behavior prioritizes reliable delivery of current dictated text.
 
 ## 9.8 Notification Adapter
 
@@ -333,9 +391,9 @@ MVP fields:
 
 ```yaml
 hotkey_command: "voxi toggle"
-asr_model: "parakeet"
+asr_model: "nvidia/parakeet-tdt-0.6b-v2"
 llm_runtime: "ollama"
-llm_model: "gemma3b"
+llm_model: "gemma3:4b"
 insert_method: "wtype"
 notification_timeout_ms: 2200
 asr_timeout_ms: 1500
@@ -486,8 +544,15 @@ System packages:
 - `wtype`
 - `wl-clipboard`
 - `libnotify` (or package providing `notify-send`)
+- Go toolchain
 - Python runtime and required ML libs
 - Local Ollama runtime
+
+GPU-related runtime dependencies (when NVIDIA is present):
+
+- NVIDIA driver stack correctly installed and loaded
+- CUDA-capable runtime path compatible with selected ASR stack
+- `nvidia-smi` available for health checks
 
 Service dependencies at runtime:
 
@@ -495,6 +560,8 @@ Service dependencies at runtime:
 - D-Bus user session active
 
 `voxi doctor` should explicitly validate all required binaries and services.
+
+For GPU-capable systems, `voxi doctor` must also print whether CUDA acceleration is active or CPU fallback is currently in use.
 
 ---
 
@@ -547,30 +614,175 @@ No remote telemetry in MVP.
 
 ## 17. Testing Strategy
 
-## 17.1 Unit Tests
+Test strategy is layered to reduce risk early:
 
-- state transition correctness
-- hotkey ignore behavior during processing
-- timeout/retry logic
-- error mapping to user messages
+- Unit tests validate deterministic logic and state safety.
+- Integration tests validate process boundaries and real adapters.
+- Manual GNOME validation confirms desktop behavior that CI cannot fully simulate.
 
-## 17.2 Integration Tests
+## 17.1 Test Harness and Fixtures
 
-- daemon <-> worker IPC contract
-- recording -> worker -> insertion happy path
-- insertion failure -> clipboard fallback
-- worker crash -> daemon survives and recovers
+Required reusable fixtures:
 
-## 17.3 Manual Validation (GNOME Fedora)
+- Fake worker server with configurable behavior:
+  - success response
+  - timeout
+  - transient error then success
+  - permanent failure
+  - crash on request
+- Command shims for `wtype`, `wl-copy`, and `notify-send`:
+  - controllable exit codes
+  - captured arguments for assertions
+- Deterministic audio fixtures:
+  - normal short utterance sample
+  - silence sample
+  - invalid/corrupt sample
+- Structured log assertion helper:
+  - validates expected `stage`, `result`, `error_code`, `retry_count`
 
-- `Super+I` starts/stops reliably
-- insertion in GNOME Text Editor, Firefox, terminal input
-- failure message includes correct stage
-- no concurrent runs possible
+Test harness requirement:
 
-Exit criteria for MVP:
+- No test should require actual model downloads or GPU for default automated runs.
+- Real model/GPU validation is covered in manual and optional extended test jobs.
 
-- all acceptance criteria from `prd.md` pass on target machine
+## 17.2 Unit Tests
+
+### 17.2.1 State Machine Correctness
+
+- `Idle` + toggle -> `Recording`
+- `Recording` + toggle -> `Processing`
+- `Processing` + toggle -> remains `Processing` (ignored)
+- `Inserting` + toggle -> remains `Inserting` (ignored)
+- `Processing` success -> `Inserting` -> `Idle`
+- any terminal error -> `Idle`
+
+### 17.2.2 Re-Entrancy and Concurrency Guards
+
+- Rapid repeated `toggle` events during `Processing` create no new jobs.
+- Exactly one in-flight dictation job allowed at any time.
+- Duplicate completion events do not cause duplicate insertions.
+
+### 17.2.3 Retry and Timeout Semantics
+
+- ASR transient timeout -> one retry -> success path continues.
+- ASR timeout after retry -> final failure with `Transcription failed`.
+- LLM transient timeout -> one retry -> success path continues.
+- LLM timeout after retry -> final failure with stage-specific message.
+- Non-transient failures do not retry.
+
+### 17.2.4 Error Mapping and User Messaging
+
+- Internal error codes map to correct user stage labels.
+- Message format always matches:
+  - `Title`
+  - `Stage: <stage_name> (<short_reason>)`
+- Missing-dependency errors map to actionable startup/doctor messages.
+
+### 17.2.5 CLI Command Semantics
+
+- `voxi toggle` returns success when daemon socket is healthy.
+- `voxi toggle` returns actionable error when daemon is unavailable.
+- `voxi status` returns valid state output schema.
+- `voxi doctor` aggregates checks and returns non-zero on fatal readiness issues.
+
+## 17.3 Integration Tests
+
+### 17.3.1 CLI <-> Daemon Contract
+
+- CLI connects to daemon Unix socket successfully.
+- Invalid daemon response payload is handled safely.
+- Socket permission/path errors produce actionable output.
+
+### 17.3.2 Daemon <-> Worker IPC Contract
+
+- Request/response schema compatibility check.
+- Unknown/missing fields handled defensively.
+- Corrupt JSON from worker leads to controlled failure and reset to `Idle`.
+
+### 17.3.3 Happy Path Flow
+
+- recording -> worker transcription+cleanup -> insertion success.
+- verifies state transitions, notifications, and success metrics/log events.
+
+### 17.3.4 Insertion and Fallback Behavior
+
+- `wtype` success -> no clipboard fallback.
+- `wtype` failure -> `wl-copy` fallback succeeds -> user informed.
+- `wtype` failure + `wl-copy` failure -> terminal insertion error surfaced cleanly.
+
+### 17.3.5 Worker Resilience
+
+- Worker crash during processing -> daemon survives.
+- Daemon restarts worker based on policy.
+- Request fails gracefully and system returns to `Idle`.
+
+### 17.3.6 Doctor and Dependency Checks
+
+- Missing `wtype` detected.
+- Missing `wl-copy` detected.
+- Ollama not reachable detected.
+- GPU checks report CUDA active vs CPU fallback status.
+
+## 17.4 Non-Functional and Reliability Tests
+
+### 17.4.1 Latency Verification
+
+On target machine, collect at least 30 dictation runs and measure:
+
+- stop -> inserted/copied end-to-end latency
+- stage-level latency breakdown
+
+Acceptance thresholds:
+
+- p95 end-to-end <= 3.0s (minimum acceptable)
+- target stretch goal remains <= 2.0s
+
+### 17.4.2 Long-Run Stability
+
+- Run daemon for >= 2 hours with periodic toggles.
+- Assert:
+  - no process leaks
+  - no state deadlocks
+  - stable memory growth profile (no obvious leak trend)
+
+### 17.4.3 Restart Behavior
+
+- Restart daemon service while idle and during processing.
+- Validate clean recovery and no stuck socket state.
+
+## 17.5 Manual Validation (GNOME Fedora)
+
+Manual matrix (minimum):
+
+- Hotkey behavior
+  - `Super+I` start/stop works consistently.
+  - press during processing is ignored.
+- App insertion targets
+  - GNOME Text Editor
+  - Firefox text field
+  - terminal input line
+- Failure UX
+  - stage-specific failure text visible and concise
+  - clipboard fallback message shown when insertion fails
+- Service lifecycle
+  - service starts with user session
+  - `voxi toggle` works from terminal and GNOME shortcut
+
+## 17.6 Release Gates and Exit Criteria
+
+Before MVP implementation is considered complete:
+
+1. All critical unit tests pass.
+2. All integration tests pass.
+3. Manual GNOME matrix passes.
+4. No known issue allows concurrent overlapping dictation jobs.
+5. Failure messaging includes correct stage context.
+6. All acceptance criteria from `prd.md` pass on target machine.
+
+Recommended policy:
+
+- P0 test failures block merge.
+- P1 tests can be deferred only with explicit tracking issue.
 
 ---
 
@@ -609,17 +821,55 @@ Exit criteria for MVP:
 ## 20. Future Evolution (Post-MVP)
 
 - Add portal-based global shortcuts for less manual setup.
-- Add optional Rust daemon rewrite while keeping worker RPC stable.
 - Add optional insertion adapters for broader desktop/app compatibility.
 - Add richer local metrics dashboard if needed.
+- Re-evaluate Rust daemon only if reliability or portal integration complexity justifies the migration cost.
 
 ---
 
-## 21. Open Questions Before Implementation
+## 21. Bootstrap Setup Script Strategy (Deferred Implementation)
 
-1. Which exact Parakeet checkpoint should be pinned for latency vs quality?
-2. Which cleanup model gives best speed/quality on this machine (`gemma3b` vs smaller)?
-3. Should we preserve previous clipboard content when fallback occurs (yes/no for MVP)?
-4. Do we enforce maximum utterance duration in MVP for predictable latency?
+This project will include a single bootstrap entrypoint for fresh Fedora setups:
 
-These should be finalized before coding starts.
+- Primary script: `scripts/setup.sh`
+- Optional helper (if needed for orchestration): `scripts/setup.py`
+
+Design intent:
+
+- user clones repo and runs one command
+- script provisions everything required for Voxi on target system
+- script is safe to re-run many times (idempotent)
+
+Requirements:
+
+1. One-command bootstrap
+   - `./scripts/setup.sh`
+2. Minimal preconditions
+   - no manual dependency installation expected where avoidable
+   - unavoidable prerequisites (for example `sudo` access and internet) must be documented in `README.md`
+3. Idempotency
+   - before each action, script checks whether requirement is already satisfied
+   - if already configured, script skips step and prints reason
+4. GPU/driver awareness
+   - detect NVIDIA hardware presence
+   - if driver stack already healthy, do not reinstall
+   - if missing and required, install/configure using Fedora-compatible path
+5. Environment provisioning
+   - install system packages
+   - install Go dependencies/toolchain as needed
+   - install Python dependencies
+6. Project setup
+   - install/activate CLI commands (`voxi`, including `voxi toggle`)
+   - install and enable user service where applicable
+   - run readiness checks (`voxi doctor`)
+
+Important sequencing note:
+
+- This script is intentionally deferred until after implementation and test hardening.
+- We will finalize it at the end, once we confirm exact working dependencies and runtime behavior on the target machine.
+
+---
+
+## 22. Open Questions Before Implementation
+
+No blocking open questions currently.
