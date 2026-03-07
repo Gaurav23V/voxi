@@ -107,12 +107,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--asr-model", required=True)
     parser.add_argument("--llm-model", required=True)
     parser.add_argument("--ollama-url", required=True)
+    parser.add_argument("--llm-timeout-ms", type=int, default=8000)
     return parser
 
 
 def build_server(args: argparse.Namespace) -> WorkerServer:
     asr_adapter = build_asr_adapter(args.asr_model)
-    cleanup_adapter = build_cleanup_adapter(args.llm_model, args.ollama_url)
+    llm_timeout_ms = int(getattr(args, "llm_timeout_ms", 8000))
+    cleanup_adapter = build_cleanup_adapter(args.llm_model, args.ollama_url, llm_timeout_ms=llm_timeout_ms)
     health = RuntimeHealth(
         device=asr_adapter.device,
         asr_model=args.asr_model,

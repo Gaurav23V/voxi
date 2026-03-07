@@ -18,6 +18,7 @@ def test_server_health(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
             asr_model="nvidia/parakeet-tdt-0.6b-v2",
             llm_model="gemma3:4b",
             ollama_url="http://127.0.0.1:11434",
+            llm_timeout_ms=8000,
         )
     )
 
@@ -39,6 +40,7 @@ def test_server_transcribe_and_clean(monkeypatch: pytest.MonkeyPatch, tmp_path) 
             asr_model="nvidia/parakeet-tdt-0.6b-v2",
             llm_model="gemma3:4b",
             ollama_url="http://127.0.0.1:11434",
+            llm_timeout_ms=8000,
         )
     )
 
@@ -69,6 +71,7 @@ def test_server_handle_connection_ignores_broken_pipe(monkeypatch: pytest.Monkey
             asr_model="nvidia/parakeet-tdt-0.6b-v2",
             llm_model="gemma3:4b",
             ollama_url="http://127.0.0.1:11434",
+            llm_timeout_ms=8000,
         )
     )
 

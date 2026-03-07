@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -155,6 +156,7 @@ func (s *Supervisor) ensureStarted(ctx context.Context) error {
 		"--asr-model", s.cfg.ASRModel,
 		"--llm-model", s.cfg.LLMModel,
 		"--ollama-url", s.cfg.OllamaURL,
+		"--llm-timeout-ms", strconv.Itoa(s.llmTimeoutMS()),
 	)
 	cmd.Env = buildWorkerEnv(os.Environ())
 
@@ -207,6 +209,13 @@ func (s *Supervisor) workerHealthTimeout() time.Duration {
 		return 1500 * time.Millisecond
 	}
 	return timeout
+}
+
+func (s *Supervisor) llmTimeoutMS() int {
+	if s.cfg.LLMTimeout <= 0 {
+		return config.Default().LLMTimeout
+	}
+	return s.cfg.LLMTimeout
 }
 
 func (s *Supervisor) awaitExit(cmd *exec.Cmd) {

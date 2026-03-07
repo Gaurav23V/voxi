@@ -10,7 +10,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from voxi_worker.asr import WorkerError
-from voxi_worker.cleanup import FakeCleanupAdapter, OllamaCleanupAdapter
+from voxi_worker.cleanup import (
+    DEFAULT_CLEANUP_TIMEOUT_MS,
+    FakeCleanupAdapter,
+    OllamaCleanupAdapter,
+    build_cleanup_adapter,
+    normalize_cleanup_timeout_ms,
+)
 
 
 def test_fake_cleanup_identity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,3 +89,28 @@ def test_ollama_cleanup_unavailable_from_urlerror(monkeypatch: pytest.MonkeyPatc
         adapter.clean("hello")
 
     assert excinfo.value.code == "LLM_UNAVAILABLE"
+
+
+def test_build_cleanup_adapter_enforces_timeout_floor() -> None:
+    adapter = build_cleanup_adapter(
+        model_name="gemma3:4b",
+        ollama_url="http://127.0.0.1:11434",
+        llm_timeout_ms=1200,
+    )
+    assert isinstance(adapter, OllamaCleanupAdapter)
+    assert adapter.timeout_s == DEFAULT_CLEANUP_TIMEOUT_MS / 1000.0
+
+
+def test_build_cleanup_adapter_respects_higher_timeout() -> None:
+    adapter = build_cleanup_adapter(
+        model_name="gemma3:4b",
+        ollama_url="http://127.0.0.1:11434",
+        llm_timeout_ms=15000,
+    )
+    assert isinstance(adapter, OllamaCleanupAdapter)
+    assert adapter.timeout_s == 15.0
+
+
+def test_normalize_cleanup_timeout_ms_uses_default_for_non_positive() -> None:
+    assert normalize_cleanup_timeout_ms(None) == DEFAULT_CLEANUP_TIMEOUT_MS
+    assert normalize_cleanup_timeout_ms(0) == DEFAULT_CLEANUP_TIMEOUT_MS

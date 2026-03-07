@@ -19,6 +19,9 @@ Text:
 {text}
 """
 
+DEFAULT_CLEANUP_TIMEOUT_MS = 8000
+MIN_CLEANUP_TIMEOUT_MS = 8000
+
 
 @dataclass(slots=True)
 class CleanupAdapter:
@@ -44,7 +47,7 @@ class FakeCleanupAdapter(CleanupAdapter):
 
 @dataclass(slots=True)
 class OllamaCleanupAdapter(CleanupAdapter):
-    timeout_s: float = 1.2
+    timeout_s: float = DEFAULT_CLEANUP_TIMEOUT_MS / 1000.0
 
     def clean(self, text: str) -> str:
         payload = {
@@ -88,11 +91,18 @@ class OllamaCleanupAdapter(CleanupAdapter):
         return cleaned
 
 
-def build_cleanup_adapter(model_name: str, ollama_url: str) -> CleanupAdapter:
+def build_cleanup_adapter(model_name: str, ollama_url: str, llm_timeout_ms: int | None = None) -> CleanupAdapter:
     mode = os.getenv("VOXI_WORKER_MODE", "").lower()
     if mode == "fake":
         return FakeCleanupAdapter(model_name=model_name, ollama_url=ollama_url)
-    return OllamaCleanupAdapter(model_name=model_name, ollama_url=ollama_url)
+    timeout_ms = normalize_cleanup_timeout_ms(llm_timeout_ms)
+    return OllamaCleanupAdapter(model_name=model_name, ollama_url=ollama_url, timeout_s=timeout_ms / 1000.0)
+
+
+def normalize_cleanup_timeout_ms(value: int | None) -> int:
+    if value is None or value <= 0:
+        return DEFAULT_CLEANUP_TIMEOUT_MS
+    return max(value, MIN_CLEANUP_TIMEOUT_MS)
 
 
 def is_timeout_reason(reason: object) -> bool:

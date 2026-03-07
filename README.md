@@ -108,6 +108,8 @@ worker_entrypoint: "voxi_worker"
 ollama_url: "http://127.0.0.1:11434"
 ```
 
+`llm_timeout_ms` values below `8000` are clamped to `8000` during cleanup requests to avoid false timeout failures on real Ollama responses.
+
 ## Commands
 
 ### `voxi daemon`
