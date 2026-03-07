@@ -3,6 +3,9 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +13,7 @@ import (
 	"github.com/Gaurav23V/voxi/internal/audio"
 	"github.com/Gaurav23V/voxi/internal/config"
 	"github.com/Gaurav23V/voxi/internal/logging"
+	"github.com/Gaurav23V/voxi/internal/output"
 	"github.com/Gaurav23V/voxi/internal/state"
 	"github.com/Gaurav23V/voxi/internal/worker"
 )
@@ -360,6 +364,73 @@ func TestInsertWithFallbackSkipsRetryWhenWTypeUnsupported(t *testing.T) {
 	}
 }
 
+func TestRecordingStopReturnsIdleWhenClipboardHelperStaysAlive(t *testing.T) {
+	recorder := &fakeRecorder{
+		capture: audio.Capture{
+			Audio:        []byte("test"),
+			AudioFormat:  "pcm_s16le",
+			SampleRateHz: 16000,
+		},
+	}
+	inserter := &fakeInserter{
+		err: errors.New("wtype failed: exit status 1: Compositor does not support the virtual keyboard protocol"),
+	}
+	notifier := &fakeNotifier{}
+	clipboardOutput := filepath.Join(t.TempDir(), "clipboard.txt")
+	clipboardCommand := writeClipboardHelperScript(t, clipboardOutput, 1200*time.Millisecond)
+
+	service := NewService(
+		config.Default(),
+		recorder,
+		fakeWorker{result: worker.Result{Transcript: "hello", Cleaned: "Hello."}},
+		inserter,
+		&output.WLCopyClipboard{Command: clipboardCommand},
+		notifier,
+		logging.NewForWriter(testWriter{t}),
+	)
+
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("first Toggle() error = %v", err)
+	}
+	if _, err := service.Toggle(context.Background()); err != nil {
+		t.Fatalf("second Toggle() error = %v", err)
+	}
+
+	started := time.Now()
+	deadline := started.Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if service.Status() == state.Idle {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if service.Status() != state.Idle {
+		t.Fatalf("service did not return to Idle while clipboard helper was still running, current=%s", service.Status())
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("service returned to Idle after %s, want well before clipboard helper exit", elapsed)
+	}
+	if !notifier.contains("Copied to clipboard|Direct typing is unavailable on this compositor. Press Ctrl+Shift+V to paste.") {
+		t.Fatalf("expected clipboard fallback notification, got %v", notifier.messages)
+	}
+
+	fileDeadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(fileDeadline) {
+		content, err := os.ReadFile(clipboardOutput)
+		if err == nil && string(content) == "Hello." {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	content, err := os.ReadFile(clipboardOutput)
+	if err != nil {
+		t.Fatalf("clipboard helper did not write output: %v", err)
+	}
+	t.Fatalf("clipboard helper output = %q, want %q", string(content), "Hello.")
+}
+
 func TestNotifyReturnsWhenNotifierBlocks(t *testing.T) {
 	service := NewService(
 		config.Default(),
@@ -421,6 +492,22 @@ type assertErr string
 
 func (e assertErr) Error() string {
 	return string(e)
+}
+
+func writeClipboardHelperScript(t *testing.T, outputPath string, sleepFor time.Duration) string {
+	t.Helper()
+
+	scriptPath := filepath.Join(t.TempDir(), "fake-wl-copy.sh")
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+cat > %q
+sleep %.3f
+`, outputPath, sleepFor.Seconds())
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(script): %v", err)
+	}
+	return scriptPath
 }
 
 // delayedWorker sleeps then returns success; used to verify timeout floors.
