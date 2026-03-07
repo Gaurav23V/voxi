@@ -30,6 +30,7 @@ type Service struct {
 	mu           sync.Mutex
 	machine      *state.Machine
 	currentJobID string
+	asrWarmed    bool
 }
 
 func NewService(cfg config.Config, recorder audio.Recorder, workerClient worker.Client, inserter output.Inserter, clipboard output.Clipboard, notifier output.Notifier, logger logging.Logger) *Service {
@@ -162,8 +163,19 @@ func (s *Service) runPipeline(jobID string, capture audio.Capture) {
 func (s *Service) transcribeWithRetry(jobID string, capture audio.Capture) (worker.Result, int, error) {
 	var lastError error
 
+	const minInferenceMs = 8000
+	const coldStartInferenceMs = 90000
+
+	totalMs := s.cfg.ASRTimeout + s.cfg.LLMTimeout
+	if totalMs < minInferenceMs {
+		totalMs = minInferenceMs
+	}
+	if !s.isASRWarmed() && totalMs < coldStartInferenceMs {
+		totalMs = coldStartInferenceMs
+	}
+
 	for attempt := 0; attempt < 2; attempt++ {
-		attemptCtx, cancel := context.WithTimeout(context.Background(), time.Duration(s.cfg.ASRTimeout+s.cfg.LLMTimeout)*time.Millisecond)
+		attemptCtx, cancel := context.WithTimeout(context.Background(), time.Duration(totalMs)*time.Millisecond)
 		started := time.Now()
 		result, err := s.worker.TranscribeAndClean(attemptCtx, jobID, capture)
 		cancel()
@@ -176,6 +188,7 @@ func (s *Service) transcribeWithRetry(jobID string, capture audio.Capture) (work
 				RetryCount: attempt,
 				DurationMS: time.Since(started).Milliseconds(),
 			})
+			s.markASRWarmed()
 			return result, attempt, nil
 		}
 
@@ -195,6 +208,18 @@ func (s *Service) transcribeWithRetry(jobID string, capture audio.Capture) (work
 	}
 
 	return worker.Result{}, 1, lastError
+}
+
+func (s *Service) isASRWarmed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.asrWarmed
+}
+
+func (s *Service) markASRWarmed() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.asrWarmed = true
 }
 
 func (s *Service) insertWithFallback(ctx context.Context, jobID, text string) error {

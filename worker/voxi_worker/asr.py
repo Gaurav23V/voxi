@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import os
+import sys
 import tempfile
+import types
 import wave
 from dataclasses import dataclass
 
@@ -51,6 +54,8 @@ class ParakeetASRAdapter(ASRAdapter):
         if self._model is not None:
             return self._model
 
+        ensure_optional_runtime_shims()
+
         try:
             import nemo.collections.asr as nemo_asr  # type: ignore
         except Exception as exc:  # pragma: no cover - exercised only in real-model mode
@@ -95,6 +100,63 @@ class ParakeetASRAdapter(ASRAdapter):
                 os.remove(temp_path)
             except OSError:
                 pass
+
+
+def ensure_optional_runtime_shims() -> None:
+    """Install lightweight shims for optional NeMo telemetry integrations.
+
+    NeMo can import training-time OneLogger callbacks even for inference-only usage.
+    Some wheels omit the optional integration module; in that case we provide a tiny
+    no-op implementation so ASR model loading can proceed.
+    """
+    _ensure_onnx_stub()
+
+    target_module = "nv_one_logger.training_telemetry.integration.pytorch_lightning"
+    try:
+        importlib.import_module(target_module)
+        return
+    except ModuleNotFoundError as exc:
+        missing = getattr(exc, "name", "")
+        if not missing.startswith("nv_one_logger.training_telemetry.integration"):
+            return
+    except Exception:
+        return
+
+    try:
+        parent = importlib.import_module("nv_one_logger.training_telemetry")
+    except Exception:
+        return
+
+    integration_pkg_name = "nv_one_logger.training_telemetry.integration"
+    integration_pkg = sys.modules.get(integration_pkg_name)
+    if integration_pkg is None:
+        integration_pkg = types.ModuleType(integration_pkg_name)
+        integration_pkg.__path__ = []  # mark as package-like module
+        sys.modules[integration_pkg_name] = integration_pkg
+
+    ptl_module = types.ModuleType(target_module)
+
+    class TimeEventCallback:  # pragma: no cover - runtime compatibility shim
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    setattr(ptl_module, "TimeEventCallback", TimeEventCallback)
+    sys.modules[target_module] = ptl_module
+    setattr(integration_pkg, "pytorch_lightning", ptl_module)
+    setattr(parent, "integration", integration_pkg)
+
+
+def _ensure_onnx_stub() -> None:
+    try:
+        importlib.import_module("onnx")
+        return
+    except Exception:
+        pass
+
+    sys.modules.pop("onnx", None)
+    onnx_stub = types.ModuleType("onnx")
+    onnx_stub.__dict__["__version__"] = "0.0-shim"
+    sys.modules["onnx"] = onnx_stub
 
 
 def build_asr_adapter(model_name: str) -> ASRAdapter:

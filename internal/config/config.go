@@ -35,8 +35,8 @@ func Default() Config {
 		LLMModel:             "gemma3:4b",
 		InsertMethod:         "wtype",
 		NotificationTimeout:  2200,
-		ASRTimeout:           1500,
-		LLMTimeout:           1200,
+		ASRTimeout:           12000, // Parakeet GPU inference can take 5-15s; 1.5s was too short
+		LLMTimeout:           8000,
 		InsertionTimeout:     200,
 		OllamaURL:            "http://127.0.0.1:11434",
 		WorkerPython:         "python3",

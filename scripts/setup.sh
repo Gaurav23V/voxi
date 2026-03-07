@@ -71,6 +71,11 @@ worker_parakeet_runtime_ready() {
   "${VENV_DIR}/bin/python" - <<'PY'
 try:
     import torch
+    try:
+        from voxi_worker.asr import ensure_optional_runtime_shims
+        ensure_optional_runtime_shims()
+    except Exception:
+        pass
     import nemo.collections.asr  # noqa: F401
 except Exception:
     raise SystemExit(1)
@@ -92,6 +97,17 @@ ensure_cpp_toolchain_for_asr() {
   if ! sudo dnf install -y gcc-c++; then
     warn "failed to install gcc-c++; NeMo ASR extras may fail to install"
   fi
+}
+
+run_worker_pip() {
+  local -a env_vars=("TMPDIR=${PIP_TEMP_DIR}" "PIP_CACHE_DIR=${PIP_CACHE_DIR}")
+  if command -v gcc >/dev/null 2>&1; then
+    env_vars+=("CC=gcc")
+  fi
+  if command -v g++ >/dev/null 2>&1; then
+    env_vars+=("CXX=g++")
+  fi
+  env "${env_vars[@]}" "${VENV_DIR}/bin/pip" "$@"
 }
 
 dnf_package_installed() {
@@ -282,16 +298,16 @@ ensure_ml_runtime_deps() {
   ensure_directory "${PIP_TEMP_DIR}"
   ensure_directory "${PIP_CACHE_DIR}"
   log "installing GPU ML dependencies (torch + nemo_toolkit)"
-  if ! TMPDIR="${PIP_TEMP_DIR}" PIP_CACHE_DIR="${PIP_CACHE_DIR}" "${VENV_DIR}/bin/pip" install --upgrade torch nemo_toolkit; then
+  if ! run_worker_pip install --upgrade torch nemo_toolkit; then
     warn "GPU ML dependency install failed; Voxi will continue with CPU fallback"
-    warn "retry manually with: TMPDIR=\"${PIP_TEMP_DIR}\" PIP_CACHE_DIR=\"${PIP_CACHE_DIR}\" ${VENV_DIR}/bin/pip install --upgrade torch nemo_toolkit"
+    warn "retry manually with: CC=gcc CXX=g++ TMPDIR=\"${PIP_TEMP_DIR}\" PIP_CACHE_DIR=\"${PIP_CACHE_DIR}\" ${VENV_DIR}/bin/pip install --upgrade torch nemo_toolkit"
     return 0
   fi
 
   if ! worker_parakeet_runtime_ready; then
     ensure_cpp_toolchain_for_asr
     log "installing additional NeMo ASR extras"
-    if ! TMPDIR="${PIP_TEMP_DIR}" PIP_CACHE_DIR="${PIP_CACHE_DIR}" "${VENV_DIR}/bin/pip" install "nemo_toolkit[asr]"; then
+    if ! run_worker_pip install "nemo_toolkit[asr]"; then
       warn "NeMo ASR extras install failed; compile toolchain or optional ASR deps may be missing"
       warn "if this is a fresh Fedora machine, install: sudo dnf install -y gcc-c++"
     fi
@@ -328,8 +344,8 @@ llm_runtime: "ollama"
 llm_model: "gemma3:4b"
 insert_method: "wtype"
 notification_timeout_ms: 2200
-asr_timeout_ms: 1500
-llm_timeout_ms: 1200
+asr_timeout_ms: 12000
+llm_timeout_ms: 8000
 insertion_timeout_ms: 200
 worker_health_timeout_ms: 5000
 worker_python: "${WORKER_PYTHON_BIN}"

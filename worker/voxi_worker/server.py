@@ -53,8 +53,13 @@ class WorkerServer:
             response = WorkerResponse(id="", ok=False, stage="startup", code="BOOT_DEP_MISSING", message=f"invalid JSON: {exc}")
         except Exception as exc:  # pragma: no cover - guard rail
             response = WorkerResponse(id="", ok=False, stage="startup", code="BOOT_DEP_MISSING", message=str(exc))
-        writer.write(json.dumps(response.to_dict()) + "\n")
-        writer.flush()
+        try:
+            writer.write(json.dumps(response.to_dict()) + "\n")
+            writer.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            # Client timed out and disconnected while the worker was still processing.
+            # Keep serving future requests instead of crashing the worker process.
+            return
 
     def handle_request(self, request: WorkerRequest) -> WorkerResponse:
         if request.op == "health":

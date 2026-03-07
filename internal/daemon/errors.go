@@ -57,6 +57,11 @@ func normalizeWorkerError(result worker.Result, err error) error {
 	reason := result.Message
 	if reason == "" {
 		reason = shortReason(err)
+		// IPC read timeout (e.g. "decode response: read unix ... i/o timeout") → consistent UX
+		if strings.Contains(strings.ToLower(reason), "timeout") {
+			code = "ASR_TIMEOUT"
+			reason = "inference exceeded timeout"
+		}
 	}
 	return NewStageError(stage, code, reason)
 }

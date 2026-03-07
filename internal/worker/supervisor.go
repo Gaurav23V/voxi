@@ -3,11 +3,14 @@ package worker
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -98,6 +101,16 @@ func (s *Supervisor) TranscribeAndClean(ctx context.Context, requestID string, c
 		RequestID: requestID,
 		Message:   err.Error(),
 	})
+
+	if isWorkerResponseError(err) {
+		return result, err
+	}
+
+	if isTimeoutError(err) {
+		// A request timeout often means first-load ASR latency; keep worker alive so
+		// subsequent retries can use warm state instead of restarting cold.
+		return Result{}, err
+	}
 
 	restartCtx, cancel := context.WithTimeout(context.Background(), s.workerHealthTimeout())
 	restartErr := s.restart(restartCtx)
@@ -230,6 +243,27 @@ func (s *Supervisor) capturePipe(stream string, reader io.ReadCloser) {
 			Message: scanner.Text(),
 		})
 	}
+}
+
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "timeout")
+}
+
+func isWorkerResponseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(err.Error())), "worker ")
 }
 
 func buildWorkerEnv(existing []string) []string {

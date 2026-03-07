@@ -356,3 +356,58 @@ type assertErr string
 func (e assertErr) Error() string {
 	return string(e)
 }
+
+// delayedWorker sleeps then returns success; used to verify timeout floors.
+type delayedWorker struct {
+	delay time.Duration
+}
+
+func (d delayedWorker) TranscribeAndClean(ctx context.Context, _ string, _ audio.Capture) (worker.Result, error) {
+	select {
+	case <-time.After(d.delay):
+		return worker.Result{Transcript: "ok", Cleaned: "ok"}, nil
+	case <-ctx.Done():
+		return worker.Result{}, ctx.Err()
+	}
+}
+
+func (d delayedWorker) Health(context.Context, string) (worker.Health, error) {
+	return worker.Health{}, nil
+}
+
+func TestTranscribeWithRetry_ColdStartFloorAllowsVerySlowFirstCall(t *testing.T) {
+	cfg := config.Default()
+	cfg.ASRTimeout = 1000
+	cfg.LLMTimeout = 1000
+	// Without a cold-start floor this would timeout quickly. The first call should
+	// tolerate a long model warm-up.
+	worker := delayedWorker{delay: 10 * time.Second}
+
+	service := NewService(
+		cfg,
+		&fakeRecorder{capture: audio.Capture{Audio: []byte("x"), AudioFormat: "pcm_s16le", SampleRateHz: 16000}},
+		worker,
+		&fakeInserter{},
+		&fakeClipboard{},
+		nil,
+		logging.NewForWriter(testWriter{t}),
+	)
+
+	_, err := service.Toggle(context.Background())
+	if err != nil {
+		t.Fatalf("first Toggle() error = %v", err)
+	}
+	_, err = service.Toggle(context.Background())
+	if err != nil {
+		t.Fatalf("second Toggle() error = %v", err)
+	}
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if service.Status() == state.Idle {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("service did not return to Idle after 20s, current=%s", service.Status())
+}
