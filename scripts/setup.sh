@@ -11,6 +11,7 @@ CONFIG_FILE="${CONFIG_DIR}/config.yaml"
 VOXI_BIN="${USER_BIN_DIR}/voxi"
 SERVICE_FILE="${SYSTEMD_USER_DIR}/voxi.service"
 WORKER_PYTHON_BIN="${VENV_DIR}/bin/python"
+NVIDIA_REBOOT_REQUIRED=0
 
 log() {
   printf '[voxi-setup] %s\n' "$*"
@@ -39,6 +40,28 @@ has_ollama_systemd_unit() {
 
 has_nvidia_hardware() {
   lspci | grep -qi 'nvidia'
+}
+
+dnf_package_installed() {
+  rpm -q "$1" >/dev/null 2>&1
+}
+
+dnf_package_available() {
+  dnf -q list --available "$1" >/dev/null 2>&1
+}
+
+ensure_rpmfusion_nvidia_repo() {
+  if dnf_package_available akmod-nvidia || dnf_package_installed akmod-nvidia; then
+    return 0
+  fi
+
+  local fedora_release
+  fedora_release="$(rpm -E %fedora)"
+
+  log "enabling RPM Fusion repositories required for NVIDIA packages"
+  sudo dnf install -y \
+    "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${fedora_release}.noarch.rpm" \
+    "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${fedora_release}.noarch.rpm"
 }
 
 is_fedora() {
@@ -71,6 +94,7 @@ install_dnf_packages() {
   command -v notify-send >/dev/null 2>&1 || packages+=(libnotify)
   command -v curl >/dev/null 2>&1 || packages+=(curl)
   command -v git >/dev/null 2>&1 || packages+=(git)
+  command -v lspci >/dev/null 2>&1 || packages+=(pciutils)
 
   if ((${#packages[@]} == 0)); then
     log "system packages already satisfied"
@@ -81,23 +105,84 @@ install_dnf_packages() {
   sudo dnf install -y "${packages[@]}"
 }
 
-ensure_ollama() {
-  if ! is_fedora && ! command -v ollama >/dev/null 2>&1; then
-    warn "Skipping automatic Ollama installation outside Fedora. Install Ollama manually for non-Fedora environments."
+ensure_nvidia_driver_stack() {
+  if ! is_fedora; then
+    return 0
+  fi
+  if ! command -v lspci >/dev/null 2>&1 || ! has_nvidia_hardware; then
+    log "no NVIDIA hardware detected; skipping NVIDIA driver setup"
     return 0
   fi
 
+  require_command sudo
+  require_command dnf
+
+  ensure_rpmfusion_nvidia_repo
+
+  local -a packages=()
+  local needs_akmods=0
+  dnf_package_installed akmod-nvidia || packages+=(akmod-nvidia)
+  dnf_package_installed xorg-x11-drv-nvidia-cuda || packages+=(xorg-x11-drv-nvidia-cuda)
+  dnf_package_installed "kernel-devel-$(uname -r)" || packages+=("kernel-devel-$(uname -r)")
+
+  if ((${#packages[@]} > 0)); then
+    log "installing NVIDIA driver packages: ${packages[*]}"
+    sudo dnf install -y "${packages[@]}"
+    needs_akmods=1
+  else
+    log "NVIDIA driver packages already installed"
+  fi
+
+  if ! modinfo nvidia >/dev/null 2>&1; then
+    needs_akmods=1
+  fi
+
+  if ((needs_akmods == 1)); then
+    if command -v akmods >/dev/null 2>&1; then
+      log "building NVIDIA kernel modules for $(uname -r)"
+      if ! sudo akmods --force --kernels "$(uname -r)"; then
+        warn "akmods build failed. Re-run: sudo akmods --force --kernels \"$(uname -r)\""
+        NVIDIA_REBOOT_REQUIRED=1
+        return 0
+      fi
+    else
+      warn "akmods command not found; NVIDIA modules may not be ready until after reboot"
+      NVIDIA_REBOOT_REQUIRED=1
+    fi
+  else
+    log "NVIDIA kernel modules already built; skipping akmods rebuild"
+  fi
+
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+    log "nvidia-smi is operational"
+    return 0
+  fi
+
+  NVIDIA_REBOOT_REQUIRED=1
+  warn "NVIDIA packages are installed but runtime is not active yet. Reboot and rerun ./scripts/setup.sh"
+}
+
+ensure_ollama() {
   if command -v ollama >/dev/null 2>&1; then
     log "ollama already installed"
+  elif is_fedora; then
+    require_command sudo
+    require_command dnf
+    log "installing Ollama from Fedora repositories"
+    sudo dnf install -y ollama
   else
     require_command curl
-    log "installing Ollama"
+    log "installing Ollama via upstream installer"
     curl -fsSL https://ollama.com/install.sh | sh
   fi
 
   if command -v systemctl >/dev/null 2>&1 && has_ollama_systemd_unit; then
-    log "enabling ollama.service"
-    sudo systemctl enable --now ollama.service
+    if systemctl is-enabled --quiet ollama.service && systemctl is-active --quiet ollama.service; then
+      log "ollama.service already enabled and running"
+    else
+      log "enabling ollama.service"
+      sudo systemctl enable --now ollama.service
+    fi
   else
     warn "No system Ollama service detected. Start it manually with 'ollama serve' before using Voxi."
   fi
@@ -163,7 +248,7 @@ EOF
 
   if ! config_has_key "worker_entrypoint" "${CONFIG_FILE}"; then
     log "adding worker_entrypoint to existing config"
-    printf 'worker_entrypoint: "voxi_worker"\n' >> "${CONFIG_FILE}"
+    printf '\nworker_entrypoint: "voxi_worker"\n' >> "${CONFIG_FILE}"
   fi
 }
 
@@ -205,6 +290,7 @@ run_doctor() {
 main() {
   ensure_directory "${USER_BIN_DIR}"
   install_dnf_packages
+  ensure_nvidia_driver_stack
   ensure_ollama
   ensure_python_env
   build_binary
@@ -212,6 +298,11 @@ main() {
   install_systemd_service
   check_nvidia_prereqs
   run_doctor
+
+  if [[ "${NVIDIA_REBOOT_REQUIRED}" -eq 1 ]]; then
+    warn "NVIDIA setup needs a reboot before GPU acceleration is available."
+    warn "After reboot, rerun ./scripts/setup.sh once to complete readiness checks."
+  fi
 
   log "setup complete"
   log "Add ${USER_BIN_DIR} to PATH if it is not already present."
