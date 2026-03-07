@@ -59,6 +59,8 @@ Hotkey presses are only accepted in `Idle` and `Recording`. Presses during `Proc
    ./scripts/setup.sh
    ```
 
+   On NVIDIA-capable machines with a working driver runtime, setup also installs the worker's GPU ML runtime (`torch` + `nemo_toolkit`) inside `.venv`.
+
 3. Start or enable the daemon:
 
    ```bash
@@ -242,7 +244,7 @@ This is expected on machines without a validated NVIDIA/CUDA runtime. On NVIDIA 
 
 - the Fedora NVIDIA driver stack is installed correctly
 - `nvidia-smi` works
-- Python ML dependencies were installed against a CUDA-capable runtime
+- Python ML dependencies (`torch` + `nemo_toolkit`) were installed in Voxi's `.venv` (the setup script installs them automatically when `nvidia-smi` is healthy)
 
 ### `voxi toggle` says the daemon is unavailable
 

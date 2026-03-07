@@ -41,7 +41,7 @@ func Default() Config {
 		OllamaURL:            "http://127.0.0.1:11434",
 		WorkerPython:         "python3",
 		WorkerEntrypoint:     "voxi_worker",
-		WorkerHealthTimeout:  1500,
+		WorkerHealthTimeout:  5000,
 		WorkerShutdownSignal: "term",
 	}
 }
@@ -72,8 +72,56 @@ func LoadFromPath(path string) (Config, string, error) {
 		return Config{}, path, fmt.Errorf("decode config: %w", err)
 	}
 
+	applyMissingDefaults(&cfg)
 	applyEnvironmentOverrides(&cfg)
 	return cfg, path, nil
+}
+
+func applyMissingDefaults(cfg *Config) {
+	defaults := Default()
+
+	if strings.TrimSpace(cfg.HotkeyCommand) == "" {
+		cfg.HotkeyCommand = defaults.HotkeyCommand
+	}
+	if strings.TrimSpace(cfg.ASRModel) == "" {
+		cfg.ASRModel = defaults.ASRModel
+	}
+	if strings.TrimSpace(cfg.LLMRuntime) == "" {
+		cfg.LLMRuntime = defaults.LLMRuntime
+	}
+	if strings.TrimSpace(cfg.LLMModel) == "" {
+		cfg.LLMModel = defaults.LLMModel
+	}
+	if strings.TrimSpace(cfg.InsertMethod) == "" {
+		cfg.InsertMethod = defaults.InsertMethod
+	}
+	if cfg.NotificationTimeout <= 0 {
+		cfg.NotificationTimeout = defaults.NotificationTimeout
+	}
+	if cfg.ASRTimeout <= 0 {
+		cfg.ASRTimeout = defaults.ASRTimeout
+	}
+	if cfg.LLMTimeout <= 0 {
+		cfg.LLMTimeout = defaults.LLMTimeout
+	}
+	if cfg.InsertionTimeout <= 0 {
+		cfg.InsertionTimeout = defaults.InsertionTimeout
+	}
+	if strings.TrimSpace(cfg.OllamaURL) == "" {
+		cfg.OllamaURL = defaults.OllamaURL
+	}
+	if strings.TrimSpace(cfg.WorkerPython) == "" {
+		cfg.WorkerPython = defaults.WorkerPython
+	}
+	if strings.TrimSpace(cfg.WorkerEntrypoint) == "" {
+		cfg.WorkerEntrypoint = defaults.WorkerEntrypoint
+	}
+	if cfg.WorkerHealthTimeout <= 0 {
+		cfg.WorkerHealthTimeout = defaults.WorkerHealthTimeout
+	}
+	if strings.TrimSpace(cfg.WorkerShutdownSignal) == "" {
+		cfg.WorkerShutdownSignal = defaults.WorkerShutdownSignal
+	}
 }
 
 func applyEnvironmentOverrides(cfg *Config) {

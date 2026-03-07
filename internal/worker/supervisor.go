@@ -99,8 +99,18 @@ func (s *Supervisor) TranscribeAndClean(ctx context.Context, requestID string, c
 		Message:   err.Error(),
 	})
 
-	if restartErr := s.restart(ctx); restartErr != nil {
+	restartCtx, cancel := context.WithTimeout(context.Background(), s.workerHealthTimeout())
+	restartErr := s.restart(restartCtx)
+	cancel()
+	if restartErr != nil {
+		if ctx.Err() != nil {
+			return Result{}, err
+		}
 		return Result{Stage: "startup", Code: "BOOT_DEP_MISSING", Message: restartErr.Error()}, restartErr
+	}
+
+	if ctx.Err() != nil {
+		return Result{}, err
 	}
 
 	return s.client.TranscribeAndClean(ctx, requestID, capture)
@@ -162,7 +172,7 @@ func (s *Supervisor) ensureStarted(ctx context.Context) error {
 }
 
 func (s *Supervisor) waitForHealth(ctx context.Context) error {
-	deadline := time.Now().Add(time.Duration(s.cfg.WorkerHealthTimeout) * time.Millisecond)
+	deadline := time.Now().Add(s.workerHealthTimeout())
 	for {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("worker health check timed out")
@@ -176,6 +186,14 @@ func (s *Supervisor) waitForHealth(ctx context.Context) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func (s *Supervisor) workerHealthTimeout() time.Duration {
+	timeout := time.Duration(s.cfg.WorkerHealthTimeout) * time.Millisecond
+	if timeout <= 0 {
+		return 1500 * time.Millisecond
+	}
+	return timeout
 }
 
 func (s *Supervisor) awaitExit(cmd *exec.Cmd) {

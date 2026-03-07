@@ -11,6 +11,8 @@ CONFIG_FILE="${CONFIG_DIR}/config.yaml"
 VOXI_BIN="${USER_BIN_DIR}/voxi"
 SERVICE_FILE="${SYSTEMD_USER_DIR}/voxi.service"
 WORKER_PYTHON_BIN="${VENV_DIR}/bin/python"
+PIP_TEMP_DIR="${ROOT_DIR}/.tmp/pip"
+PIP_CACHE_DIR="${ROOT_DIR}/.cache/pip"
 NVIDIA_REBOOT_REQUIRED=0
 
 log() {
@@ -40,6 +42,56 @@ has_ollama_systemd_unit() {
 
 has_nvidia_hardware() {
   lspci | grep -qi 'nvidia'
+}
+
+nvidia_runtime_ready() {
+  command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1
+}
+
+worker_cuda_runtime_ready() {
+  if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+    return 1
+  fi
+
+  "${VENV_DIR}/bin/python" - <<'PY'
+try:
+    import torch
+except Exception:
+    raise SystemExit(1)
+
+raise SystemExit(0 if torch.cuda.is_available() else 1)
+PY
+}
+
+worker_parakeet_runtime_ready() {
+  if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+    return 1
+  fi
+
+  "${VENV_DIR}/bin/python" - <<'PY'
+try:
+    import torch
+    import nemo.collections.asr  # noqa: F401
+except Exception:
+    raise SystemExit(1)
+
+raise SystemExit(0 if torch.cuda.is_available() else 1)
+PY
+}
+
+ensure_cpp_toolchain_for_asr() {
+  if ! is_fedora || command -v g++ >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! command -v sudo >/dev/null 2>&1; then
+    warn "gcc-c++ is required for some NeMo ASR dependencies, but sudo is unavailable"
+    return 0
+  fi
+
+  log "installing gcc-c++ for NeMo ASR dependency builds"
+  if ! sudo dnf install -y gcc-c++; then
+    warn "failed to install gcc-c++; NeMo ASR extras may fail to install"
+  fi
 }
 
 dnf_package_installed() {
@@ -95,6 +147,9 @@ install_dnf_packages() {
   command -v curl >/dev/null 2>&1 || packages+=(curl)
   command -v git >/dev/null 2>&1 || packages+=(git)
   command -v lspci >/dev/null 2>&1 || packages+=(pciutils)
+  if command -v lspci >/dev/null 2>&1 && has_nvidia_hardware && ! command -v g++ >/dev/null 2>&1; then
+    packages+=(gcc-c++)
+  fi
 
   if ((${#packages[@]} == 0)); then
     log "system packages already satisfied"
@@ -209,6 +264,48 @@ ensure_python_env() {
   WORKER_PYTHON_BIN="${VENV_DIR}/bin/python"
 }
 
+ensure_ml_runtime_deps() {
+  if ! nvidia_runtime_ready; then
+    log "nvidia runtime not active; skipping GPU ML dependency install"
+    return 0
+  fi
+  if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+    warn "python virtual environment missing; skipping GPU ML dependency install"
+    return 0
+  fi
+
+  if worker_parakeet_runtime_ready; then
+    log "GPU ML runtime already available in worker environment"
+    return 0
+  fi
+
+  ensure_directory "${PIP_TEMP_DIR}"
+  ensure_directory "${PIP_CACHE_DIR}"
+  log "installing GPU ML dependencies (torch + nemo_toolkit)"
+  if ! TMPDIR="${PIP_TEMP_DIR}" PIP_CACHE_DIR="${PIP_CACHE_DIR}" "${VENV_DIR}/bin/pip" install --upgrade torch nemo_toolkit; then
+    warn "GPU ML dependency install failed; Voxi will continue with CPU fallback"
+    warn "retry manually with: TMPDIR=\"${PIP_TEMP_DIR}\" PIP_CACHE_DIR=\"${PIP_CACHE_DIR}\" ${VENV_DIR}/bin/pip install --upgrade torch nemo_toolkit"
+    return 0
+  fi
+
+  if ! worker_parakeet_runtime_ready; then
+    ensure_cpp_toolchain_for_asr
+    log "installing additional NeMo ASR extras"
+    if ! TMPDIR="${PIP_TEMP_DIR}" PIP_CACHE_DIR="${PIP_CACHE_DIR}" "${VENV_DIR}/bin/pip" install "nemo_toolkit[asr]"; then
+      warn "NeMo ASR extras install failed; compile toolchain or optional ASR deps may be missing"
+      warn "if this is a fresh Fedora machine, install: sudo dnf install -y gcc-c++"
+    fi
+  fi
+
+  if worker_parakeet_runtime_ready; then
+    log "GPU ML runtime is ready for Parakeet inference"
+  elif worker_cuda_runtime_ready; then
+    warn "CUDA runtime is active but NeMo ASR runtime is incomplete; dictation may fail until ASR extras install successfully"
+  else
+    warn "ML dependencies installed but worker still reports CPU fallback"
+  fi
+}
+
 build_binary() {
   require_command go
   ensure_directory "${BIN_DIR}"
@@ -234,6 +331,7 @@ notification_timeout_ms: 2200
 asr_timeout_ms: 1500
 llm_timeout_ms: 1200
 insertion_timeout_ms: 200
+worker_health_timeout_ms: 5000
 worker_python: "${WORKER_PYTHON_BIN}"
 worker_entrypoint: "voxi_worker"
 ollama_url: "http://127.0.0.1:11434"
@@ -249,6 +347,11 @@ EOF
   if ! config_has_key "worker_entrypoint" "${CONFIG_FILE}"; then
     log "adding worker_entrypoint to existing config"
     printf '\nworker_entrypoint: "voxi_worker"\n' >> "${CONFIG_FILE}"
+  fi
+
+  if ! config_has_key "worker_health_timeout_ms" "${CONFIG_FILE}"; then
+    log "adding worker_health_timeout_ms to existing config"
+    printf '\nworker_health_timeout_ms: 5000\n' >> "${CONFIG_FILE}"
   fi
 }
 
@@ -293,6 +396,7 @@ main() {
   ensure_nvidia_driver_stack
   ensure_ollama
   ensure_python_env
+  ensure_ml_runtime_deps
   build_binary
   ensure_config
   install_systemd_service

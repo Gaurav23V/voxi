@@ -142,8 +142,15 @@ func extractPCMData(content []byte) ([]byte, error) {
 func isExpectedStopError(err error) bool {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signal() == os.Interrupt {
-			return true
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+			if status.Signal() == syscall.SIGINT {
+				return true
+			}
+			// pw-record may handle SIGINT and still return exit code 1 after
+			// flushing a valid WAV file.
+			if status.ExitStatus() == 1 {
+				return true
+			}
 		}
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "interrupt")
