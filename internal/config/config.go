@@ -35,7 +35,7 @@ func Default() Config {
 		LLMModel:             "gemma3:4b",
 		InsertMethod:         "wtype",
 		NotificationTimeout:  2200,
-		ASRTimeout:           12000, // Parakeet GPU inference can take 5-15s; 1.5s was too short
+		ASRTimeout:           45000, // Long dictation runs need a larger ASR budget than the original MVP default
 		LLMTimeout:           8000,
 		InsertionTimeout:     200,
 		OllamaURL:            "http://127.0.0.1:11434",

@@ -344,7 +344,7 @@ llm_runtime: "ollama"
 llm_model: "gemma3:4b"
 insert_method: "wtype"
 notification_timeout_ms: 2200
-asr_timeout_ms: 12000
+asr_timeout_ms: 45000
 llm_timeout_ms: 8000
 insertion_timeout_ms: 200
 worker_health_timeout_ms: 5000
