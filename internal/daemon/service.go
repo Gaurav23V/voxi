@@ -130,6 +130,7 @@ func (s *Service) runPipeline(jobID string, capture audio.Capture) {
 	}
 
 	if !s.beginInsert(jobID) {
+		s.resetToIdle(jobID)
 		return
 	}
 
@@ -143,7 +144,8 @@ func (s *Service) runPipeline(jobID string, capture audio.Capture) {
 		return
 	}
 
-	insertStart := time.Now()
+	s.notify(context.Background(), "Transcription ready", "Inserting text...")
+
 	if err := s.insertWithFallback(context.Background(), jobID, text); err != nil {
 		s.fail(context.Background(), jobID, err)
 		return
@@ -156,7 +158,7 @@ func (s *Service) runPipeline(jobID string, capture audio.Capture) {
 		Result:     "completed",
 		RequestID:  jobID,
 		RetryCount: retryCount,
-		DurationMS: time.Since(started).Milliseconds() + time.Since(insertStart).Milliseconds(),
+		DurationMS: time.Since(started).Milliseconds(),
 	})
 }
 
@@ -224,6 +226,7 @@ func (s *Service) markASRWarmed() {
 
 func (s *Service) insertWithFallback(ctx context.Context, jobID, text string) error {
 	var lastError error
+	wtypeUnsupported := false
 
 	for attempt := 0; attempt < 2; attempt++ {
 		insertCtx, cancel := context.WithTimeout(ctx, time.Duration(s.cfg.InsertionTimeout)*time.Millisecond)
@@ -243,6 +246,20 @@ func (s *Service) insertWithFallback(ctx context.Context, jobID, text string) er
 		}
 
 		lastError = NewStageError("Text insertion", "INS_WTYPE_FAILED", shortReason(err))
+		if isNonRetryableWTypeError(err) {
+			wtypeUnsupported = true
+			s.logger.Log(logging.Event{
+				Stage:      "Text insertion",
+				Result:     "wtype_unavailable",
+				RequestID:  jobID,
+				ErrorCode:  "INS_WTYPE_FAILED",
+				RetryCount: attempt,
+				DurationMS: time.Since(started).Milliseconds(),
+				Message:    shortReason(err),
+			})
+			break
+		}
+
 		if attempt == 1 {
 			break
 		}
@@ -263,7 +280,11 @@ func (s *Service) insertWithFallback(ctx context.Context, jobID, text string) er
 		return NewStageError("Text insertion", "INS_CLIPBOARD_FAILED", shortReason(err))
 	}
 
-	s.notify(context.Background(), "Copied to clipboard", "")
+	if wtypeUnsupported {
+		s.notify(context.Background(), "Copied to clipboard", "Direct typing is unavailable on this compositor. Press Ctrl+Shift+V to paste.")
+	} else {
+		s.notify(context.Background(), "Copied to clipboard", "Press Ctrl+Shift+V to paste.")
+	}
 	s.logger.Log(logging.Event{
 		Stage:     "Text insertion",
 		Result:    "clipboard_fallback",
@@ -313,7 +334,22 @@ func (s *Service) notify(ctx context.Context, title, body string) {
 	if s.notifier == nil {
 		return
 	}
-	_ = s.notifier.Notify(ctx, title, body)
+	const notifyCommandTimeout = 2 * time.Second
+	notifyCtx, cancel := context.WithTimeout(ctx, notifyCommandTimeout)
+	defer cancel()
+	if err := s.notifier.Notify(notifyCtx, title, body); err != nil {
+		s.logger.Log(logging.Event{
+			Stage:   "notification",
+			Result:  "error",
+			Message: err.Error(),
+		})
+	}
+}
+
+func isNonRetryableWTypeError(err error) bool {
+	lowered := strings.ToLower(shortReason(err))
+	return strings.Contains(lowered, "virtual keyboard protocol") ||
+		strings.Contains(lowered, "compositor does not support")
 }
 
 var requestCounter uint64

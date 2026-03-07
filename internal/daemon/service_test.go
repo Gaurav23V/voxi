@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -326,6 +327,71 @@ func TestCleanupTransientFailureRetriesOnce(t *testing.T) {
 	if workerClient.calls != 2 {
 		t.Fatalf("worker calls = %d, want 2", workerClient.calls)
 	}
+}
+
+func TestInsertWithFallbackSkipsRetryWhenWTypeUnsupported(t *testing.T) {
+	inserter := &fakeInserter{
+		err: errors.New("wtype failed: exit status 1: Compositor does not support the virtual keyboard protocol"),
+	}
+	clipboard := &fakeClipboard{}
+	notifier := &fakeNotifier{}
+	service := NewService(
+		config.Default(),
+		&fakeRecorder{},
+		fakeWorker{},
+		inserter,
+		clipboard,
+		notifier,
+		logging.NewForWriter(testWriter{t}),
+	)
+
+	if err := service.insertWithFallback(context.Background(), "job-unsupported", "hello world"); err != nil {
+		t.Fatalf("insertWithFallback() error = %v", err)
+	}
+
+	if inserter.calls != 1 {
+		t.Fatalf("wtype insert calls = %d, want 1 (skip retry on non-retryable error)", inserter.calls)
+	}
+	if clipboard.calls != 1 {
+		t.Fatalf("clipboard copy calls = %d, want 1", clipboard.calls)
+	}
+	if !notifier.contains("Copied to clipboard|Direct typing is unavailable on this compositor. Press Ctrl+Shift+V to paste.") {
+		t.Fatalf("expected compositor-specific clipboard notification, got %v", notifier.messages)
+	}
+}
+
+func TestNotifyReturnsWhenNotifierBlocks(t *testing.T) {
+	service := NewService(
+		config.Default(),
+		&fakeRecorder{},
+		fakeWorker{},
+		&fakeInserter{},
+		&fakeClipboard{},
+		&blockingNotifier{},
+		logging.NewForWriter(testWriter{t}),
+	)
+
+	started := time.Now()
+	service.notify(context.Background(), "title", "body")
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("notify() elapsed = %s, want <= 3s", elapsed)
+	}
+}
+
+func TestIsNonRetryableWTypeError(t *testing.T) {
+	if !isNonRetryableWTypeError(errors.New("Compositor does not support the virtual keyboard protocol")) {
+		t.Fatalf("expected non-retryable classification for compositor protocol error")
+	}
+	if isNonRetryableWTypeError(errors.New("wtype failed: transient focus error")) {
+		t.Fatalf("did not expect non-retryable classification for generic wtype failure")
+	}
+}
+
+type blockingNotifier struct{}
+
+func (b *blockingNotifier) Notify(ctx context.Context, _ string, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 type testWriter struct {
