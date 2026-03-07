@@ -411,6 +411,9 @@ func TestRecordingStopReturnsIdleWhenClipboardHelperStaysAlive(t *testing.T) {
 	if elapsed := time.Since(started); elapsed >= time.Second {
 		t.Fatalf("service returned to Idle after %s, want well before clipboard helper exit", elapsed)
 	}
+	if notifier.contains("Transcription ready|Inserting text...") {
+		t.Fatalf("did not expect pre-insert notification before clipboard fallback, got %v", notifier.messages)
+	}
 	if !notifier.contains("Copied to clipboard|Direct typing is unavailable on this compositor. Press Ctrl+Shift+V to paste.") {
 		t.Fatalf("expected clipboard fallback notification, got %v", notifier.messages)
 	}

@@ -144,8 +144,6 @@ func (s *Service) runPipeline(jobID string, capture audio.Capture) {
 		return
 	}
 
-	s.notify(context.Background(), "Transcription ready", "Inserting text...")
-
 	if err := s.insertWithFallback(context.Background(), jobID, text); err != nil {
 		s.fail(context.Background(), jobID, err)
 		return

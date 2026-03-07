@@ -149,6 +149,35 @@ Runs local dependency and readiness checks:
 - NVIDIA driver visibility via `nvidia-smi`
 - worker runtime probe showing CUDA vs CPU fallback
 
+### `voxi restart`
+
+Restarts the installed `systemd --user` service:
+
+```bash
+voxi restart
+```
+
+This is equivalent to:
+
+```bash
+systemctl --user restart voxi.service
+```
+
+### `voxi rebuild`
+
+Rebuilds the Go CLI from the source tree, reinstalls it to `~/.local/bin/voxi`, and restarts the user service:
+
+```bash
+voxi rebuild
+```
+
+`voxi rebuild` expects to be run from the repository (or a subdirectory inside it). If you want to run it from elsewhere, set:
+
+```bash
+export VOXI_SOURCE_DIR="/absolute/path/to/repo"
+voxi rebuild
+```
+
 ## Structured logging
 
 Voxi writes JSON lines to:
@@ -170,6 +199,28 @@ systemctl --user enable --now voxi.service
 ```
 
 The service targets `graphical-session.target` for GNOME Wayland sessions.
+
+### Apply local code changes
+
+After changing Go code in the repository, the running service will not pick up the new code until you rebuild the installed binary and restart the service. The simplest workflow is:
+
+```bash
+voxi rebuild
+```
+
+If you only need to restart the current installed build:
+
+```bash
+voxi restart
+```
+
+Manual fallback commands:
+
+```bash
+go build -o ./bin/voxi ./cmd/voxi
+install -m 0755 ./bin/voxi ~/.local/bin/voxi
+systemctl --user restart voxi.service
+```
 
 ## Tests
 
