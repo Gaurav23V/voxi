@@ -22,3 +22,28 @@ Voxi uses a Client-Server architecture to ensure instant startup times by keepin
 *   **OS:** Linux with Wayland (Tested on Debian 13 / GNOME)
 *   **Hardware:** Nvidia GPU (Tested on RTX 3050 6GB)
 *   **System Dependencies:** `wl-clipboard` (clipboard management), `libnotify-bin` (`notify-send` for feedback)
+
+## Project Structure
+
+```
+voxi/
+├── src/
+│   ├── daemon.py        # Main entry point — socket server, state machine, orchestration
+│   ├── audio.py         # Mic stream management via sounddevice (open, buffer, close)
+│   ├── transcriber.py   # Loads Parakeet model into VRAM at startup, runs transcription
+│   └── notify.py        # Thin wrapper around notify-send for desktop notifications
+│
+├── client/
+│   └── voxi-toggle      # The client — sends a single TOGGLE command to the daemon socket
+│
+├── systemd/
+│   └── voxi.service     # systemd user service template (auto-start on login)
+│
+├── scripts/
+│   └── install.sh       # One-shot setup: venv, symlinks, systemd registration
+│
+├── docs/
+│   └── daemon.md        # In-depth documentation of the daemon internals
+│
+└── pyproject.toml       # Project metadata and dependencies (managed by uv)
+```
