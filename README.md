@@ -47,3 +47,37 @@ voxi/
 │
 └── pyproject.toml       # Project metadata and dependencies (managed by uv)
 ```
+
+## Local Setup
+
+> [!IMPORTANT]
+> **Nvidia drivers must be installed on your system before proceeding.** This project requires a working Nvidia GPU with the appropriate driver for your distro. Driver installation is out of scope for this guide — refer to your distro's documentation or the [Nvidia driver installation guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/).
+
+**Check your CUDA version and update `pyproject.toml` before running `uv sync`:**
+
+```bash
+nvidia-smi   # look for "CUDA Version: XX.X" in the top-right corner
+```
+
+Open `pyproject.toml` and update the index URL to match your CUDA version:
+- CUDA 11.8 → `https://download.pytorch.org/whl/cu118`
+- CUDA 12.1 → `https://download.pytorch.org/whl/cu121`
+- CUDA 12.4 → `https://download.pytorch.org/whl/cu124`  ← default in this repo
+
+Once confirmed, run the following block to set up everything:
+
+```bash
+# 1. Install uv (Python package and environment manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Install system-level dependencies
+sudo apt install libportaudio2 wl-clipboard libnotify-bin
+
+# 3. Install Python 3.11 via uv
+uv python install 3.11
+
+# 4. Create the virtual environment and install all Python dependencies
+uv sync
+```
+
+The `.venv/` directory will be created in the project root with all dependencies installed and ready.

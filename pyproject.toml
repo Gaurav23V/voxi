@@ -1,0 +1,37 @@
+[project]
+name = "voxi"
+version = "0.1.0"
+description = "Fast local GPU-accelerated voice dictation for Linux (Wayland/GNOME)"
+requires-python = "==3.11.*"
+dependencies = [
+    # ASR model — pulls in torch, torchaudio, and other NeMo deps
+    "nemo_toolkit[asr]",
+    # Audio capture from microphone
+    "sounddevice",
+    # Numerical arrays for audio buffer manipulation
+    "numpy",
+]
+
+# ---------------------------------------------------------------------------
+# uv configuration
+# ---------------------------------------------------------------------------
+
+[tool.uv]
+# Install PyTorch with CUDA 12.4 support on Linux.
+# If your CUDA version differs, update the index URL below.
+# Find your CUDA version with: nvidia-smi
+# Available wheels: https://download.pytorch.org/whl/torch/
+index-strategy = "unsafe-best-match"
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cuda", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
+    { index = "pytorch-cuda", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
