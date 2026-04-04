@@ -154,6 +154,102 @@ The OS uses interrupts, not polling — the kernel wakes the process the instant
 
 ---
 
+## Daemon Lifecycle — State Machine
+
+The daemon is always in one of three states. The **only** trigger for each transition is a `TOGGLE` command from the client (or task completion for PROCESSING → IDLE):
+
+```
+┌─────────┐   TOGGLE   ┌───────────┐   TOGGLE   ┌─────────────┐
+│  IDLE   │ ─────────→ │ RECORDING │ ──────────→ │ PROCESSING  │
+└─────────┘            └───────────┘             └──────┬──────┘
+     ↑                                                   │ done
+     └───────────────────────────────────────────────────┘
+```
+
+Important rules:
+- A `TOGGLE` during `PROCESSING` is **ignored** (can't interrupt transcription)
+- There is no automatic timeout — the daemon records until the user presses the shortcut again
+
+---
+
+## Full Daemon Lifecycle
+
+### Phase 1: IDLE → RECORDING (first TOGGLE)
+
+1. Check state — if `PROCESSING`, ignore and return
+2. Flip state to `RECORDING`
+3. **Start audio capture first** — `sounddevice` opens the mic and begins streaming chunks into an in-memory buffer
+4. **Then notify** `🔴 Recording...` — by the time the notification renders on screen (~100–200ms), the mic is already hot and capturing
+
+> **Why this order matters:** If the notification fires before the mic is open, the user sees the cue and starts speaking before audio is being captured — losing the first word or two. Starting capture first guarantees the mic is live before the user reacts.
+
+```python
+audio_buffer = []
+
+def audio_callback(indata, frames, time, status):
+    audio_buffer.append(indata.copy())  # called continuously by sounddevice
+
+stream = sd.InputStream(callback=audio_callback, samplerate=16000, channels=1)
+stream.start()          # mic is live NOW
+notify("🔴 Recording...")  # user sees this ~100-200ms later
+```
+
+The audio callback runs on a thread managed by `sounddevice`. The main thread stays free to listen on the socket for the second TOGGLE.
+
+### Phase 2: RECORDING → PROCESSING (second TOGGLE)
+
+1. Stop the audio stream (`stream.stop()` / `stream.close()`)
+2. Flip state to `PROCESSING`
+3. Notify `⚙️ Transcribing...`
+4. **Spin up a worker thread** for transcription (see Threading Model below)
+5. Main thread returns immediately to `server.accept()` — socket stays alive
+
+### Phase 3: PROCESSING → IDLE (transcription done)
+
+This happens inside the worker thread:
+
+1. Concatenate all audio chunks into one array:
+   ```python
+   audio_data = np.concatenate(audio_buffer, axis=0)
+   audio_buffer.clear()
+   ```
+2. Run transcription — the GPU-heavy step:
+   ```python
+   transcription = model.transcribe([audio_data])[0]
+   ```
+   Duration scales with audio length (~0.5–1s for a 10s clip on an RTX 3050).
+3. Copy to clipboard:
+   ```python
+   subprocess.run(["wl-copy"], input=transcription.encode(), check=True)
+   ```
+4. Notify `✅ Copied to clipboard`
+5. Flip state back to `IDLE`
+
+---
+
+## Threading Model
+
+The daemon runs transcription in a **background worker thread** rather than blocking the main thread. This keeps the socket responsive during the ~1s GPU operation.
+
+```
+Main thread:    [accept] ──────────────────────────── [accept TOGGLE → "🚫 busy"] ──── [accept]
+Worker thread:            [concatenate][GPU transcribe][wl-copy][notify ✅][state=IDLE]
+```
+
+**Shared state between threads** — just one flag:
+```python
+state = "IDLE"  # values: "IDLE", "RECORDING", "PROCESSING"
+```
+
+When a TOGGLE arrives during `PROCESSING`:
+- Main thread reads `state == "PROCESSING"`
+- Immediately sends a `🚫 Still processing, please wait` notification
+- Does nothing else — no queuing
+
+This gives the user immediate feedback instead of silent nothing, without any complex queuing logic.
+
+---
+
 ## How systemd Watches the Process
 
 When systemd starts the daemon, the OS assigns it a **PID** (process ID). systemd stores this and subscribes to kernel events for that PID.
@@ -173,9 +269,25 @@ systemd does **not** inspect memory or code — it only watches at the process l
 
 ---
 
+## Notifications Reference
+
+All notifications use `notify-send` via subprocess:
+
+| Trigger | Message | Urgency |
+|---|---|---|
+| Mic opens | 🔴 Recording... | `low` |
+| Second TOGGLE received | ⚙️ Transcribing... | `low` |
+| Transcription done | ✅ Copied to clipboard | `normal` |
+| TOGGLE during PROCESSING | 🚫 Still processing, please wait | `low` |
+| Any error | ❌ Error message | `critical` |
+
+---
+
 ## Design Implications for the Daemon Code
 
 - **Use `logging` not `print()`** — systemd captures stdout/stderr and routes them to the journal automatically
 - **Handle `SIGTERM`** — systemd sends SIGTERM on `stop`; clean up the socket file before exiting
 - **Use absolute paths** — the working directory under systemd is `/`
 - **Set `WAYLAND_DISPLAY` explicitly** — don't rely on environment inheritance; set it in the `.service` file
+- **Start mic before notifying** — `stream.start()` is synchronous; the mic is live before `notify-send` fires
+- **Transcription runs in a worker thread** — keeps the socket responsive; state is coordinated via a single shared `state` string
