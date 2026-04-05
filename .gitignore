@@ -1,0 +1,21 @@
+# Python
+__pycache__/*
+*.py[cod]
+*.pyo
+
+# Virtual environment (managed by uv)
+.venv/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Environment variables
+.env
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
