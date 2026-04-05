@@ -4,7 +4,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/share/voxi/.venv/bin/python %h/.local/share/voxi/src/daemon.py
+ExecStart=%h/.local/share/voxi/.venv/bin/python -m src.daemon
 Restart=on-failure
 RestartSec=3
 WorkingDirectory=%h/.local/share/voxi/
