@@ -1,12 +1,12 @@
 # Voxi
 
-A fast, local, GPU-accelerated voice dictation tool for Linux (Wayland/GNOME), powered by Nvidia Parakeet.
+A fast, local, GPU-accelerated voice dictation tool for Linux (GNOME), powered by Nvidia Parakeet.
 
 ## Architecture
 
 Voxi uses a Client-Server architecture to ensure instant startup times by keeping the heavy ASR model warm in GPU VRAM.
 
-*   **The Daemon (Server):** A background Python service that loads the Parakeet model, handles audio recording (`sounddevice`), runs transcription, copies the result to the clipboard (`wl-clipboard`), and manages all desktop notifications.
+*   **The Daemon (Server):** A background Python service that loads the Parakeet model, handles audio recording (`sounddevice`), runs transcription, copies the result to the clipboard, and manages all desktop notifications.
 *   **The Client (CLI):** A lightning-fast script (`voxi-toggle`) triggered by a GNOME global shortcut. It only sends a "TOGGLE" command to the daemon via Unix Domain Sockets (`/tmp/voxi.sock`).
 
 ## Workflow
@@ -15,13 +15,13 @@ Voxi uses a Client-Server architecture to ensure instant startup times by keepin
 2.  **Record:** Daemon starts capturing audio in memory and triggers a "🔴 Listening" desktop notification.
 3.  **Stop:** Press global shortcut again -> `voxi-toggle` sends another "TOGGLE".
 4.  **Process:** Daemon stops recording, triggers a "⚙️ Transcribing" notification, and begins GPU transcription.
-5.  **Output:** Daemon finishes transcription, pastes the text to the Wayland clipboard, and triggers a final "✅ Copied" notification.
+5.  **Output:** Daemon finishes transcription, pastes the text to the clipboard, and triggers a final "✅ Copied" notification.
 
 ## System Requirements
 
-*   **OS:** Linux with Wayland (Tested on Debian 13 / GNOME)
+*   **OS:** Linux with GNOME (Tested on Debian 13)
 *   **Hardware:** Nvidia GPU (Tested on RTX 3050 6GB)
-*   **System Dependencies:** `wl-clipboard` (clipboard management), `libnotify-bin` (`notify-send` for feedback)
+*   **System Dependencies:** `wl-clipboard` or `xclip` (clipboard management), `libnotify-bin` (`notify-send` for feedback)
 
 ## Project Structure
 
@@ -71,7 +71,7 @@ Once confirmed, run the following block to set up everything:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 2. Install system-level dependencies
-sudo apt install libportaudio2 wl-clipboard libnotify-bin
+sudo apt install libportaudio2 wl-clipboard xclip libnotify-bin
 
 # 3. Install Python 3.11 via uv
 uv python install 3.11
