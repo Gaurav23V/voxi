@@ -48,7 +48,36 @@ voxi/
 └── pyproject.toml       # Project metadata and dependencies (managed by uv)
 ```
 
-## Local Setup
+## Installation
+
+> [!IMPORTANT]
+> **Nvidia drivers must be installed on your system before proceeding.** This project requires a working Nvidia GPU with the appropriate driver for your distro. Driver installation is out of scope for this guide — refer to your distro's documentation or the [Nvidia driver installation guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/).
+
+Run the install script from the project root:
+
+```bash
+./scripts/install.sh
+```
+
+The script handles everything:
+- Installing system dependencies (libportaudio2, wl-clipboard, xclip, libnotify-bin)
+- Installing uv and Python 3.11
+- Setting up the Python environment
+- Copying the project to `~/.local/share/voxi`
+- Symlinking the client to `~/.local/bin/voxi-toggle`
+- Registering the systemd user service
+- Starting the daemon
+
+Once installed, bind a GNOME keyboard shortcut to `voxi-toggle`:
+
+1. Open **Settings → Keyboard → Keyboard Shortcuts → Custom Shortcuts**
+2. Click **Add Shortcut**
+3. Enter a name (e.g. "Voxi") and set the command to `voxi-toggle`
+4. Press your desired key combination (e.g. `Super + V`)
+
+You're ready to use Voxi — press the shortcut once to start recording, again to stop and transcribe.
+
+## Local Setup (Manual)
 
 > [!IMPORTANT]
 > **Nvidia drivers must be installed on your system before proceeding.** This project requires a working Nvidia GPU with the appropriate driver for your distro. Driver installation is out of scope for this guide — refer to your distro's documentation or the [Nvidia driver installation guide](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/).
