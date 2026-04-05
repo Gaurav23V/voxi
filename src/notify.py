@@ -24,7 +24,7 @@ def _send(message: str, urgency: str = "normal") -> None:
             "sudo apt install libnotify-bin"
         )
     except subprocess.CalledProcessError as e:
-        logger.error("notify-send failed (exit %d)", e.returncode)
+        logger.error(f"notify-send failed (exit {e.returncode})")
 
 
 def recording() -> None:
