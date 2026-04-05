@@ -1,0 +1,13 @@
+[Unit]
+Description=Voxi Voice Dictation Daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/voxi/.venv/bin/python %h/.local/share/voxi/src/daemon.py
+Restart=on-failure
+RestartSec=3
+WorkingDirectory=%h/.local/share/voxi/
+
+[Install]
+WantedBy=default.target
