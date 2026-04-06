@@ -11,4 +11,4 @@ RestartSec=3
 WorkingDirectory=%h/.local/share/voxi/
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

@@ -82,6 +82,9 @@ echo "      Done."
 # ---------------------------------------------------------------------------
 echo ""
 echo "[7/8] Setting up systemd service..."
+# Clean up any old systemd targets before linking
+systemctl --user disable voxi.service &>/dev/null || true
+
 mkdir -p "$(dirname "$SERVICE_FILE")"
 ln -sf "$INSTALL_DIR/systemd/voxi.service" "$SERVICE_FILE"
 echo "      Symlinked voxi.service to $SERVICE_FILE"
