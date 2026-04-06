@@ -110,3 +110,16 @@ uv sync
 ```
 
 The `.venv/` directory will be created in the project root with all dependencies installed and ready.
+
+## Troubleshooting
+
+### Voxi breaks after waking PC from Sleep (CUDA Unknown Error)
+By default, Nvidia drivers on Linux do not preserve GPU memory (VRAM) during system sleep/suspend. When your computer wakes up, the VRAM where the AI model was loaded becomes corrupted, causing the daemon to silently fail with a `CUDA unknown error` when you try to dictate.
+
+To permanently fix this, Nvidia provides a kernel-level feature to safely save VRAM to your system memory during sleep. We have included an automated helper script to configure this for you.
+
+Simply run:
+```bash
+sudo ./scripts/fix_nvidia_suspend.sh
+```
+*(This will safely update your GRUB configuration, enable the required systemd suspend services, and update your bootloader. You must **reboot your computer** after running this script).*
