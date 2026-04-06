@@ -43,25 +43,24 @@ uv python install 3.11
 echo "      Done."
 
 # ---------------------------------------------------------------------------
-# 4. Install Python dependencies
+# 4. Copy project to permanent location
 # ---------------------------------------------------------------------------
 echo ""
-echo "[4/8] Installing Python dependencies..."
-uv sync
+echo "[4/8] Syncing project to $INSTALL_DIR..."
+mkdir -p "$INSTALL_DIR"
+# Use rsync to mirror code, ignoring local .venv and .git to prevent copying large/unnecessary files
+rsync -a --delete --exclude='.git' --exclude='.venv' "$(pwd)/" "$INSTALL_DIR/"
 echo "      Done."
 
 # ---------------------------------------------------------------------------
-# 5. Copy project to permanent location
+# 5. Install Python dependencies
 # ---------------------------------------------------------------------------
 echo ""
-echo "[5/8] Copying project to $INSTALL_DIR..."
-mkdir -p "$(dirname "$INSTALL_DIR")"
-if [ -d "$INSTALL_DIR" ]; then
-    echo "      Warning: $INSTALL_DIR already exists. Skipping copy."
-else
-    cp -r "$(pwd)" "$INSTALL_DIR"
-    echo "      Done."
-fi
+echo "[5/8] Installing Python dependencies in $INSTALL_DIR..."
+cd "$INSTALL_DIR"
+uv sync
+cd - > /dev/null
+echo "      Done."
 
 # ---------------------------------------------------------------------------
 # 6. Create ~/.local/bin and symlink client
@@ -74,12 +73,8 @@ if [ ! -d "$BIN_DIR" ]; then
     sudo chown "$USER:$USER" "$BIN_DIR"
     echo "      Created $BIN_DIR"
 fi
-if [ -L "$BIN_DIR/voxi-toggle" ]; then
-    echo "      Symlink already exists."
-else
-    ln -s "$INSTALL_DIR/client/voxi-toggle.py" "$BIN_DIR/voxi-toggle"
-    echo "      Symlinked voxi-toggle to $BIN_DIR"
-fi
+ln -sf "$INSTALL_DIR/client/voxi-toggle.py" "$BIN_DIR/voxi-toggle"
+echo "      Symlinked voxi-toggle to $BIN_DIR"
 echo "      Done."
 
 # ---------------------------------------------------------------------------
@@ -88,22 +83,18 @@ echo "      Done."
 echo ""
 echo "[7/8] Setting up systemd service..."
 mkdir -p "$(dirname "$SERVICE_FILE")"
-if [ -L "$SERVICE_FILE" ]; then
-    echo "      Symlink already exists."
-else
-    ln -s "$INSTALL_DIR/systemd/voxi.service" "$SERVICE_FILE"
-    echo "      Symlinked voxi.service to $SERVICE_FILE"
-fi
+ln -sf "$INSTALL_DIR/systemd/voxi.service" "$SERVICE_FILE"
+echo "      Symlinked voxi.service to $SERVICE_FILE"
 echo "      Done."
 
 # ---------------------------------------------------------------------------
-# 8. Enable and start service
+# 8. Enable and restart service
 # ---------------------------------------------------------------------------
 echo ""
-echo "[8/8] Enabling and starting Voxi service..."
+echo "[8/8] Enabling and restarting Voxi service..."
 systemctl --user daemon-reload
 systemctl --user enable voxi.service
-systemctl --user start voxi.service
+systemctl --user restart voxi.service
 echo "      Done."
 
 echo ""
